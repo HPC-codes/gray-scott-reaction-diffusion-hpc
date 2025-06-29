@@ -34,10 +34,14 @@ cmap.set_over('white')
 
 # ===== FUNCIONES AUXILIARES =====
 def find_simulation_folder():
-    folders = sorted(glob.glob("BZ_Geometry_*"),
-                   key=lambda x: os.path.getmtime(x),
-                   reverse=True)
+    base_path = "/content"
+    folders = sorted(
+        glob.glob(os.path.join(base_path, "BZ_Geometry_*")),
+        key=lambda x: os.path.getmtime(x),
+        reverse=True
+    )
     return folders[0] if folders else None
+
 
 def load_metrics_bin(folder):
     metrics_file = f"{folder}/metrics.bin"
@@ -266,3 +270,4 @@ except Exception as e:
                         interval=50, blit=True)
     plt.close()
     HTML(anim.to_html5_video())
+
