@@ -5,7 +5,7 @@ import glob
 import os
 from datetime import datetime
 import pandas as pd
-from tqdm import tqdm
+from timeit import default_timer as timer
 
 # ===== CONFIGURACIÓN DE ESTILO =====
 plt.style.use('default')
@@ -13,169 +13,221 @@ rcParams.update({
     'font.family': 'sans-serif',
     'font.size': 12,
     'text.usetex': False,
-    'figure.figsize': (10, 6),
+    'figure.figsize': (12, 12),  # Ajustado para mejor visualización
     'figure.dpi': 150,
     'axes.grid': True,
-    'grid.alpha': 0.3
+    'grid.alpha': 0.3,
+    'axes.titlepad': 15,
+    'axes.titlesize': 14,
+    'axes.labelsize': 12
 })
+
+# Paleta de colores
+COLOR_ENTROPIA = '#1a5fb4'
+COLOR_GRADIENTE = '#e01b24'
+COLOR_MAXIMO = '#2ec27e'
+COLOR_FONDO = '#f8f9fa'
 
 # ===== FUNCIONES AUXILIARES =====
 def find_simulation_folder():
     """Encuentra la carpeta de simulación más reciente"""
+    start = timer()
     folders = sorted(glob.glob("BZ_Geometry_*"), key=os.path.getmtime, reverse=True)
-    return folders[0] if folders else None
+    elapsed = timer() - start
+    return folders[0] if folders else None, elapsed
 
 def load_simulation_data(folder, step):
     """Carga los datos de simulación para un paso específico"""
+    start = timer()
     file_pattern = os.path.join(folder, f"bz_{step}.csv")
     matching_files = glob.glob(file_pattern)
     
     if not matching_files:
         raise FileNotFoundError(f"No se encontró archivo para el paso {step}")
     
-    return np.loadtxt(matching_files[0], delimiter=',')
+    data = np.loadtxt(matching_files[0], delimiter=',')
+    elapsed = timer() - start
+    return data, elapsed
 
 def load_metrics(folder):
     """Carga las métricas de la simulación"""
+    start = timer()
     metrics_file = os.path.join(folder, "metrics.csv")
     if not os.path.exists(metrics_file):
         raise FileNotFoundError("No se encontró el archivo de métricas")
-    return pd.read_csv(metrics_file)
+    
+    metrics = pd.read_csv(metrics_file)
+    elapsed = timer() - start
+    return metrics, elapsed
 
 def create_output_directory():
     """Crea un directorio para guardar los resultados"""
+    start = timer()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = f"BZ_Visualization_{timestamp}"
     os.makedirs(output_dir, exist_ok=True)
-    return output_dir
+    elapsed = timer() - start
+    return output_dir, elapsed
 
-def generate_text_report(metrics, output_dir, geometry_name):
-    """Genera el archivo TXT con el formato solicitado"""
+def generate_reports(metrics, output_dir, geometry_name, timings):
+    """Genera todos los reportes necesarios"""
+    start_time = timer()
+    
+    # Filtrar hasta 140,000 pasos
     metrics = metrics[metrics['Paso'] <= 140000]
     
-    report_content = (
-        "# Entropía Normalizada\n\n"
-        f"- Máx: {metrics['Entropia'].max():.3f}\n"
-        "- Gradiente Promedio\n"
-        f"- Máx: {metrics['GradientePromedio'].max():.3f}\n\n"
-        "## Magnitud del Gradiente\n\n"
-        "- 0\n"
-        "- 20000\n"
-        "- 40000\n"
-        "- 60000\n"
-        "- 80000\n"
-        "- 100000\n\n"
-        "## Paso de Simulación\n\n"
-        f"- Entropía: Media={metrics['Entropia'].mean():.3f} ± {metrics['Entropia'].std():.3f}\n"
-        f"- Gradiente: Media={metrics['GradientePromedio'].mean():.3f} ± {metrics['GradientePromedio'].std():.3f}\n"
-    )
+    # ===== 1. Generar archivo TXT de métricas =====
+    with open(os.path.join(output_dir, "BZ_Resumen.txt"), 'w') as f:
+        f.write("# Entropía Normalizada\n\n")
+        f.write(f"- Máx: {metrics['Entropia'].max():.3f}\n")
+        f.write("- Gradiente Promedio\n")
+        f.write(f"- Máx: {metrics['GradientePromedio'].max():.3f}\n\n")
+        f.write("## Magnitud del Gradiente\n\n")
+        f.write("- 0\n- 20000\n- 40000\n- 60000\n- 80000\n- 100000\n\n")
+        f.write("## Paso de Simulación\n\n")
+        f.write(f"- Entropía: Media={metrics['Entropia'].mean():.3f} ± {metrics['Entropia'].std():.3f}\n")
+        f.write(f"- Gradiente: Media={metrics['GradientePromedio'].mean():.3f} ± {metrics['GradientePromedio'].std():.3f}\n")
     
-    report_file = os.path.join(output_dir, "BZ_Resumen.txt")
-    with open(report_file, 'w') as f:
-        f.write(report_content)
+    # ===== 2. Generar archivo TXT de tiempos =====
+    with open(os.path.join(output_dir, "BZ_Tiempos.txt"), 'w') as f:
+        f.write("=== Tiempos de Ejecución ===\n")
+        f.write(f"Búsqueda de carpeta: {timings['busqueda']:.4f} s\n")
+        f.write(f"Carga de métricas: {timings['carga_metricas']:.4f} s\n")
+        f.write(f"Creación de directorio: {timings['creacion_dir']:.4f} s\n")
+        f.write(f"Carga de último frame: {timings['carga_frame']:.4f} s\n")
+        f.write("---------------------------------\n")
+        f.write(f"Datos guardados en: {os.path.abspath(output_dir)}\n")
     
-    return report_file
-
-def plot_separate_metrics(metrics, output_dir, geometry_name):
-    """Genera gráficas separadas para Entropía y Gradiente"""
-    metrics = metrics[metrics['Paso'] <= 140000]
+    # ===== 3. Generar gráfica combinada con nuevo orden =====
+    fig = plt.figure(figsize=(12, 12))
+    fig.set_facecolor(COLOR_FONDO)
     
-    # Gráfica de Entropía
-    plt.figure()
-    plt.plot(metrics['Paso'], metrics['Entropia'], color='#1f77b4', linewidth=2)
-    plt.title('Entropía Normalizada', pad=20)
-    plt.xlabel('Paso de Simulación')
-    plt.ylabel('Entropía')
-    plt.grid(True, linestyle='--', alpha=0.3)
-    entropy_file = os.path.join(output_dir, "BZ_Entropia.png")
-    plt.savefig(entropy_file, bbox_inches='tight')
-    plt.close()
+    # Diseño de la cuadrícula
+    gs = fig.add_gridspec(3, 1, height_ratios=[1, 1, 1.2])
     
-    # Gráfica de Gradiente
-    plt.figure()
-    plt.plot(metrics['Paso'], metrics['GradientePromedio'], color='#d62728', linewidth=2)
-    plt.title('Magnitud del Gradiente', pad=20)
-    plt.xlabel('Paso de Simulación')
-    plt.ylabel('Gradiente')
-    plt.xticks([0, 20000, 40000, 60000, 80000, 100000])
-    plt.grid(True, linestyle='--', alpha=0.3)
-    gradient_file = os.path.join(output_dir, "BZ_Gradiente.png")
-    plt.savefig(gradient_file, bbox_inches='tight')
-    plt.close()
-    
-    return entropy_file, gradient_file
-
-def save_last_frame(simulation_folder, metrics, output_dir, geometry_name):
-    """Guarda solo el último frame (140,000)"""
+    # 1. Gráfica del último frame (PRIMERA, como solicitaste)
+    ax1 = fig.add_subplot(gs[0])
     try:
-        data = load_simulation_data(simulation_folder, 140000)
-        
-        fig, ax = plt.subplots(figsize=(10, 8))
-        im = ax.imshow(data, cmap='viridis', vmin=0, vmax=1)
-        plt.colorbar(im, label='Concentración de reactivo')
-        ax.set_xticks([])
-        ax.set_yticks([])
-        plt.title(f"Patrón BZ - {geometry_name} - Paso 140,000")
-        
-        frame_file = os.path.join(output_dir, "BZ_Final_Frame.png")
-        plt.savefig(frame_file, dpi=150, bbox_inches='tight')
-        plt.close()
-        
-        return frame_file
+        last_frame, _ = load_simulation_data(simulation_folder, 140000)
+        im = ax1.imshow(last_frame, cmap='viridis')
+        plt.colorbar(im, ax=ax1, label='Concentración de reactivo')
+        ax1.set_title(f'Patrón BZ - {geometry_name} - Paso 140,000', fontsize=14)
+        ax1.set_xticks([])
+        ax1.set_yticks([])
     except Exception as e:
-        print(f"Error al guardar último frame: {str(e)}")
-        return None
+        ax1.text(0.5, 0.5, "No se pudo cargar el último frame", 
+                ha='center', va='center', transform=ax1.transAxes)
+        ax1.set_title('Patrón BZ - Datos no disponibles', fontsize=14)
+    
+    # 2. Gráfica de Entropía (SEGUNDA)
+    ax2 = fig.add_subplot(gs[1])
+    ax2.set_facecolor(COLOR_FONDO)
+    
+    # Datos de Entropía
+    max_entropy = metrics['Entropia'].max()
+    max_entropy_step = metrics.loc[metrics['Entropia'].idxmax(), 'Paso']
+    mean_entropy = metrics['Entropia'].mean()
+    std_entropy = metrics['Entropia'].std()
+    
+    ax2.plot(metrics['Paso'], metrics['Entropia'], color=COLOR_ENTROPIA, linewidth=2, label='Entropía')
+    ax2.plot(max_entropy_step, max_entropy, 'o', color=COLOR_MAXIMO, markersize=8)
+    
+    # Cuadro de información
+    entropy_info = (f"Máximo: {max_entropy:.3f}\n"
+                   f"Media: {mean_entropy:.3f} ± {std_entropy:.3f}\n"
+                   f"Paso máximo: {int(max_entropy_step):,}")
+    
+    ax2.text(0.98, 0.98, entropy_info, 
+            transform=ax2.transAxes,
+            ha='right', va='top',
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='gray'),
+            fontsize=10)
+    
+    ax2.set_title('Entropía Normalizada', color=COLOR_ENTROPIA, fontsize=14)
+    ax2.set_ylabel('Entropía', color=COLOR_ENTROPIA)
+    ax2.tick_params(axis='y', colors=COLOR_ENTROPIA)
+    ax2.grid(True, linestyle='--', alpha=0.3)
+    ax2.legend(loc='lower right')
+    
+    # 3. Gráfica de Gradiente (TERCERA)
+    ax3 = fig.add_subplot(gs[2])
+    ax3.set_facecolor(COLOR_FONDO)
+    
+    # Datos de Gradiente
+    max_gradient = metrics['GradientePromedio'].max()
+    max_gradient_step = metrics.loc[metrics['GradientePromedio'].idxmax(), 'Paso']
+    mean_gradient = metrics['GradientePromedio'].mean()
+    std_gradient = metrics['GradientePromedio'].std()
+    
+    ax3.plot(metrics['Paso'], metrics['GradientePromedio'], color=COLOR_GRADIENTE, linewidth=2, label='Gradiente')
+    ax3.plot(max_gradient_step, max_gradient, 'o', color=COLOR_MAXIMO, markersize=8)
+    
+    # Cuadro de información
+    gradient_info = (f"Máximo: {max_gradient:.3f}\n"
+                    f"Media: {mean_gradient:.3f} ± {std_gradient:.3f}\n"
+                    f"Paso máximo: {int(max_gradient_step):,}")
+    
+    ax3.text(0.98, 0.98, gradient_info, 
+            transform=ax3.transAxes,
+            ha='right', va='top',
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='gray'),
+            fontsize=10)
+    
+    ax3.set_title('Magnitud del Gradiente', color=COLOR_GRADIENTE, fontsize=14)
+    ax3.set_xlabel('Paso de Simulación')
+    ax3.set_ylabel('Gradiente', color=COLOR_GRADIENTE)
+    ax3.set_xticks([0, 20000, 40000, 60000, 80000, 100000, 120000, 140000])
+    ax3.tick_params(axis='y', colors=COLOR_GRADIENTE)
+    ax3.grid(True, linestyle='--', alpha=0.3)
+    ax3.legend(loc='lower right')
+    
+    plt.tight_layout()
+    combined_file = os.path.join(output_dir, "BZ_Graficas_Combinadas.png")
+    plt.savefig(combined_file, bbox_inches='tight', dpi=150, facecolor=COLOR_FONDO)
+    plt.close()
+    
+    timings['generacion_reportes'] = timer() - start_time
+    return combined_file
 
 # ===== FUNCIÓN PRINCIPAL =====
 def main():
     print("\n=== Generador de Visualizaciones BZ ===\n")
+    timings = {}
+    global simulation_folder  # Necesario para acceder en generate_reports
     
-    # Encontrar carpeta de simulación
-    simulation_folder = find_simulation_folder()
+    # 1. Buscar carpeta de simulación
+    simulation_folder, timings['busqueda'] = find_simulation_folder()
     if not simulation_folder:
         raise FileNotFoundError("No se encontraron carpetas BZ_Geometry_*")
-    
     print(f"Procesando simulación en: {simulation_folder}")
     
-    # Obtener información de geometría
+    # 2. Obtener información de geometría
     geo_code = simulation_folder.split('_')[-1]
     geo_names = {'1':'Focos Circulares', '2':'Línea', '3':'Cuadrado', '4':'Hexágono', '5':'Cruz'}
     geometry_name = geo_names.get(geo_code, f"Geometría {geo_code}")
     
-    # Cargar métricas
-    try:
-        metrics = load_metrics(simulation_folder)
-        print(f"Datos cargados: {len(metrics)} pasos de simulación")
-    except Exception as e:
-        print(f"Error al cargar métricas: {str(e)}")
-        return
+    # 3. Cargar métricas
+    metrics, timings['carga_metricas'] = load_metrics(simulation_folder)
+    print(f"Datos cargados: {len(metrics)} pasos de simulación")
     
-    # Crear directorio de salida
-    output_dir = create_output_directory()
+    # 4. Crear directorio de salida
+    output_dir, timings['creacion_dir'] = create_output_directory()
     print(f"Resultados se guardarán en: {output_dir}")
     
-    # 1. Generar archivo TXT
-    try:
-        txt_file = generate_text_report(metrics, output_dir, geometry_name)
-        print(f"✓ Reporte TXT generado: {os.path.basename(txt_file)}")
-    except Exception as e:
-        print(f"Error al generar reporte TXT: {str(e)}")
+    # 5. Cargar último frame
+    _, timings['carga_frame'] = load_simulation_data(simulation_folder, 140000)
     
-    # 2. Generar gráficas separadas
-    try:
-        entropy_file, gradient_file = plot_separate_metrics(metrics, output_dir, geometry_name)
-        print(f"✓ Gráfica de Entropía generada: {os.path.basename(entropy_file)}")
-        print(f"✓ Gráfica de Gradiente generada: {os.path.basename(gradient_file)}")
-    except Exception as e:
-        print(f"Error al generar gráficas: {str(e)}")
+    # 6. Generar reportes y gráficas
+    combined_file = generate_reports(metrics, output_dir, geometry_name, timings)
     
-    # 3. Guardar último frame (140,000)
-    try:
-        frame_file = save_last_frame(simulation_folder, metrics, output_dir, geometry_name)
-        if frame_file:
-            print(f"✓ Último frame guardado: {os.path.basename(frame_file)}")
-    except Exception as e:
-        print(f"Error al guardar último frame: {str(e)}")
+    print("\n✅ Resultados generados:")
+    print(f"- BZ_Resumen.txt (métricas)")
+    print(f"- BZ_Tiempos.txt (tiempos de ejecución)")
+    print(f"- BZ_Graficas_Combinadas.png (3 gráficas en una imagen)")
+    
+    print("\n⏱️ Tiempos de ejecución:")
+    for key, value in timings.items():
+        print(f"- {key.replace('_', ' ').title()}: {value:.4f} s")
 
 if __name__ == "__main__":
     main()
