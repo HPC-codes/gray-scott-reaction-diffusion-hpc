@@ -4,6 +4,7 @@ from matplotlib import rcParams
 import os
 from datetime import datetime
 import pandas as pd
+import glob  # ¡Esta es la importación que faltaba!
 
 # ===== CONFIGURACIÓN BÁSICA =====
 plt.style.use('default')
