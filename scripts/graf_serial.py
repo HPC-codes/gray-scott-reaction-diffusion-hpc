@@ -4,19 +4,21 @@ from matplotlib import rcParams
 import os
 from datetime import datetime
 import pandas as pd
-import glob  # ¡Esta es la importación que faltaba!
+import glob
 
-# ===== CONFIGURACIÓN BÁSICA =====
+# ===== CONFIGURACIÓN =====
 plt.style.use('default')
 rcParams.update({
     'font.family': 'sans-serif',
     'font.size': 12,
     'text.usetex': False,
     'figure.figsize': (10, 8),
-    'figure.dpi': 150
+    'figure.dpi': 150,
+    'axes.grid': True,
+    'grid.alpha': 0.3
 })
 
-# ===== FUNCIONES ESENCIALES =====
+# ===== FUNCIONES =====
 def find_simulation_folder():
     """Encuentra la carpeta de simulación más reciente"""
     folders = sorted(glob.glob("BZ_Geometry_*"), key=os.path.getmtime, reverse=True)
@@ -36,61 +38,85 @@ def create_output_directory():
     os.makedirs(output_dir, exist_ok=True)
     return output_dir
 
-def generate_metrics_summary(metrics, output_dir, geometry_name):
-    """Genera EXCLUSIVAMENTE la imagen resumen de 0 a 140,000 pasos"""
-    # Filtrar y calcular métricas
+def generate_full_report(metrics, output_dir, geometry_name):
+    """Genera el reporte completo con gráfica y resumen"""
+    # Filtrar datos hasta 140,000 pasos
     metrics = metrics[metrics['Paso'] <= 140000]
-    entropy_max = metrics['Entropia'].max()
-    gradient_max = metrics['GradientePromedio'].max()
-    entropy_stats = f"{metrics['Entropia'].mean():.3f} ± {metrics['Entropia'].std():.3f}"
-    gradient_stats = f"{metrics['GradientePromedio'].mean():.3f} ± {metrics['GradientePromedio'].std():.3f}"
-
-    # Configurar figura
-    fig = plt.figure(figsize=(10, 6))
-    plt.subplots_adjust(left=0.1, right=0.9, top=0.8, bottom=0.1)
     
-    # Texto con formato exacto
-    summary_text = (
-        "# Entropía Normalizada\n"
-        f"- Máx: {entropy_max:.3f}\n\n"
-        "## Gradiente Promedio\n"
-        f"- Máx: {gradient_max:.3f}\n\n"
-        "## Paso de Simulación\n"
-        f"- Entropía: Media={entropy_stats}\n"
-        f"- Gradiente: Media={gradient_stats}\n\n"
-        "---\n\n"
-        "### Diagrama\n"
-        "- **Máx**: 0.002\n"
-        "- **Fonte**:\n"
-        "  - 20000\n"
-        "  - 40000\n"
-        "  - 60000\n"
-        "  - 80000\n"
-        "  - 100000\n"
-        "  - 120000\n"
-        "  - 140000"
-    )
-
-    # Añadir texto centrado
-    plt.text(0.5, 0.5, summary_text, 
-             ha='center', va='center', 
-             fontsize=14, family='monospace',
-             bbox=dict(facecolor='white', alpha=0.9))
+    # ===== 1. CREAR GRÁFICA =====
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
-    plt.axis('off')
-    plt.title(f"Resumen de Simulación BZ - {geometry_name}\n(0 a 140,000 pasos)", 
-              fontsize=16, pad=20)
+    # Gráfico de Entropía
+    ax1.plot(metrics['Paso'], metrics['Entropia'], 
+             color='#1f77b4', label='Entropía')
+    ax1.set_ylabel('Entropía Normalizada')
+    ax1.legend()
+    ax1.grid(True, linestyle='--', alpha=0.3)
     
-    # Guardar imagen única
-    output_file = os.path.join(output_dir, "Resumen_BZ_Final.png")
-    plt.savefig(output_file, bbox_inches='tight')
+    # Gráfico de Gradiente
+    ax2.plot(metrics['Paso'], metrics['GradientePromedio'], 
+             color='#d62728', label='Gradiente')
+    ax2.set_xlabel('Paso de Simulación')
+    ax2.set_ylabel('Gradiente Promedio')
+    ax2.legend()
+    ax2.grid(True, linestyle='--', alpha=0.3)
+    
+    plt.suptitle(f"Análisis de Simulación BZ - {geometry_name}\n(Pasos 0-140,000)", y=1.02)
+    plt.tight_layout()
+    
+    # Guardar gráfica
+    plot_file = os.path.join(output_dir, "BZ_Grafica_Metricas.png")
+    plt.savefig(plot_file, bbox_inches='tight')
     plt.close()
     
-    return output_file
+    # ===== 2. CREAR RESUMEN TEXTO =====
+    fig = plt.figure(figsize=(10, 6))
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+    
+    # Texto con formato
+    summary_text = (
+        "# Análisis de Simulación BZ - {}\n"
+        "**(Pasos 0-140,000)**\n\n"
+        "- **Entropía Normalizada**\n"
+        "  Máx: {:.3f}\n\n"
+        "- **Gradiente Promedio**\n"
+        "  Máx: {:.3f}\n\n"
+        "- **Máx:** {:.3f}\n\n"
+        "- **Gradiente:** Median = {:.3f} ± {:.3f}\n"
+        "  Gradiente: Median = {:.3f} ± {:.3f}\n\n"
+        "---\n\n"
+        "### Diagrama\n"
+        "- **Entropía Normalizada**\n"
+        "  - Máx: {:.3f}\n"
+        "  - Gradiente: {:.3f}\n"
+        "  - Gradiente: {:.3f}"
+    ).format(
+        geometry_name,
+        metrics['Entropia'].max(),
+        metrics['GradientePromedio'].max(),
+        metrics['GradientePromedio'].max(),
+        metrics['Entropia'].median(), metrics['Entropia'].std(),
+        metrics['GradientePromedio'].median(), metrics['GradientePromedio'].std(),
+        metrics['Entropia'].max(),
+        metrics['GradientePromedio'].max(),
+        metrics['GradientePromedio'].max()
+    )
+    
+    plt.text(0.5, 0.5, summary_text, 
+             ha='center', va='center', 
+             fontsize=12, family='monospace')
+    plt.axis('off')
+    
+    # Guardar resumen
+    text_file = os.path.join(output_dir, "BZ_Resumen_Texto.png")
+    plt.savefig(text_file, bbox_inches='tight')
+    plt.close()
+    
+    return plot_file, text_file
 
 # ===== PROGRAMA PRINCIPAL =====
 def main():
-    print("\n=== GENERADOR DE RESUMEN BZ (0-140,000 pasos) ===")
+    print("\n=== GENERADOR DE INFORME BZ (0-140,000 pasos) ===")
     
     # 1. Encontrar datos
     folder = find_simulation_folder()
@@ -108,16 +134,17 @@ def main():
     
     # 3. Obtener nombre de geometría
     geo_code = folder.split('_')[-1]
-    geo_names = {'1':'Círculos', '2':'Línea', '3':'Cuadrado', '4':'Hexágono', '5':'Cruz'}
+    geo_names = {'1':'Focos Circulares', '2':'Línea', '3':'Cuadrado', '4':'Hexágono', '5':'Cruz'}
     geo_name = geo_names.get(geo_code, f"Geometría {geo_code}")
     
-    # 4. Crear resumen
+    # 4. Crear reporte completo
     output_dir = create_output_directory()
     try:
-        result_file = generate_metrics_summary(metrics, output_dir, geo_name)
-        print(f"✓ Resumen generado:\n{os.path.abspath(result_file)}")
+        plot_file, text_file = generate_full_report(metrics, output_dir, geo_name)
+        print(f"✓ Gráfica generada:\n{os.path.abspath(plot_file)}")
+        print(f"✓ Resumen generado:\n{os.path.abspath(text_file)}")
     except Exception as e:
-        print(f"ERROR al generar imagen: {str(e)}")
+        print(f"ERROR al generar reporte: {str(e)}")
 
 if __name__ == "__main__":
     main()
