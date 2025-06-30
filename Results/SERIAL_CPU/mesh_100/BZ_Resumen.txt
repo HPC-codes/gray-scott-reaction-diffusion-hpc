@@ -1,0 +1,19 @@
+# Resultados de Simulación BZ
+
+## Entropía Normalizada
+- Máximo: 0.648
+- Media: 0.514 ± 0.030
+
+## Gradiente Promedio
+- Máximo: 0.022
+- Media: 0.016 ± 0.001
+
+## Pasos Clave
+- 0
+- 20000
+- 40000
+- 60000
+- 80000
+- 100000
+- 120000
+- 140000
