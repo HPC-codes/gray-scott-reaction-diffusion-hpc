@@ -1,15 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import rcParams, ticker
+from matplotlib import rcParams, colors, animation
 import glob
 import os
 from datetime import datetime
 import pandas as pd
+from tqdm import tqdm
 
-# ===== CONFIGURACIÓN DE ESTILO ACADÉMICO (COMPATIBLE) =====
+# ===== CONFIGURACIÓN DE ESTILO ACADÉMICO =====
 plt.style.use('default')
 
-# Configuración manual avanzada
 rcParams.update({
     'font.family': 'sans-serif',
     'font.sans-serif': ['Arial', 'DejaVu Sans', 'Liberation Sans'],
@@ -19,11 +19,9 @@ rcParams.update({
     'axes.labelsize': 14,
     'axes.titlesize': 16,
     'axes.linewidth': 1.2,
-    'axes.grid': True,
-    'grid.alpha': 0.3,
+    'axes.grid': False,
     'axes.edgecolor': 'black',
     'axes.labelcolor': 'black',
-    'axes.titlelocation': 'center',
     
     'lines.linewidth': 2.5,
     'lines.markersize': 8,
@@ -36,204 +34,231 @@ rcParams.update({
     'xtick.major.width': 1.2,
     'ytick.major.size': 6,
     'ytick.major.width': 1.2,
-    'xtick.color': 'black',
-    'ytick.color': 'black',
     
-    'figure.figsize': (12, 6),
+    'figure.figsize': (10, 8),
     'figure.dpi': 100,
     'figure.autolayout': True,
     'figure.facecolor': 'white'
 })
 
-# Paleta de colores profesional
-colors = {
-    'entropy': '#1f77b4',  # Azul
-    'gradient': '#d62728',  # Rojo
-    'highlight': '#2ca02c',  # Verde
-    'background': 'white',
-    'grid': '#dddddd'
-}
+# Paleta de colores personalizada para BZ
+cmap_bz = colors.LinearSegmentedColormap.from_list('bz', ['#000000', '#1a237e', '#0d47a1', '#1976d2', '#039be5', '#00bcd4', '#4dd0e1', '#e8f5e9', '#ffeb3b', '#ffc107', '#ff9800', '#ff5722', '#e53935', '#b71c1c'])
 
 # ===== FUNCIONES AUXILIARES =====
 def find_simulation_folder():
     """Encuentra la carpeta de simulación más reciente"""
-    base_path = os.getcwd()
     folders = sorted(
-        glob.glob(os.path.join(base_path, "BZ_Geometry_*")),
+        glob.glob("BZ_Geometry_*"),
         key=lambda x: os.path.getmtime(x),
         reverse=True
     )
     return folders[0] if folders else None
 
-def load_metrics_csv(folder):
-    """Carga los datos desde archivos CSV"""
-    # Buscar archivos CSV en la carpeta
-    csv_files = glob.glob(os.path.join(folder, "*.csv"))
-    if not csv_files:
-        raise FileNotFoundError("No se encontraron archivos CSV en la carpeta")
+def load_simulation_data(folder, step):
+    """Carga los datos de simulación para un paso específico"""
+    file_pattern = os.path.join(folder, f"bz_{step}.csv")
+    matching_files = glob.glob(file_pattern)
     
-    # Cargar datos desde el primer archivo CSV encontrado
-    try:
-        df = pd.read_csv(csv_files[0])
-        
-        # Verificar que tenga las columnas necesarias
-        required_cols = ['step', 'entropy', 'gradient']
-        if not all(col in df.columns for col in required_cols):
-            raise ValueError("El archivo CSV no tiene las columnas requeridas (step, entropy, gradient)")
-            
-        # Convertir a formato estructurado similar al original
-        data = np.zeros(len(df), dtype=[('step', 'i4'), ('entropy', 'f8'), ('gradient', 'f8')])
-        data['step'] = df['step'].values
-        data['entropy'] = df['entropy'].values
-        data['gradient'] = df['gradient'].values
-        
-        # Normalizar entropía si es necesario
-        if np.max(data['entropy']) > 1:
-            data['entropy'] = data['entropy'] / np.max(data['entropy'])
-            
-        return data
-    except Exception as e:
-        print(f"Error al cargar CSV: {str(e)}")
-        return None
-
-def load_metrics_txt(folder):
-    """Carga los datos desde archivos TXT con formato específico"""
-    txt_files = glob.glob(os.path.join(folder, "*.txt"))
-    if not txt_files:
-        raise FileNotFoundError("No se encontraron archivos TXT en la carpeta")
+    if not matching_files:
+        raise FileNotFoundError(f"No se encontró archivo para el paso {step}")
     
+    return np.loadtxt(matching_files[0], delimiter=',')
+
+def load_metrics(folder):
+    """Carga las métricas de la simulación"""
+    metrics_file = os.path.join(folder, "metrics.csv")
+    if not os.path.exists(metrics_file):
+        raise FileNotFoundError("No se encontró el archivo de métricas")
+    
+    return pd.read_csv(metrics_file)
+
+def create_output_directory():
+    """Crea un directorio para guardar los resultados"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = f"BZ_Visualization_{timestamp}"
+    os.makedirs(output_dir, exist_ok=True)
+    return output_dir
+
+# ===== FUNCIONES DE VISUALIZACIÓN =====
+def plot_single_frame(data, step, metrics, output_dir, geometry_name):
+    """Genera una imagen individual para un paso de simulación"""
+    fig, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(10, 12))
+    
+    # Configurar título principal
+    fig.suptitle(f"Reacción Belousov-Zhabotinsky\nGeometría: {geometry_name} - Paso: {step:,}", y=0.95)
+    
+    # Visualización del patrón
+    im = ax1.imshow(data, cmap=cmap_bz, vmin=0, vmax=1, interpolation='bilinear')
+    fig.colorbar(im, ax=ax1, label='Concentración de reactivo', shrink=0.8)
+    ax1.set_xticks([])
+    ax1.set_yticks([])
+    ax1.set_title("Patrón de reacción", pad=20)
+    
+    # Gráfico de métricas hasta este paso
+    current_metrics = metrics[metrics['Paso'] <= step]
+    
+    # Entropía
+    ax2.plot(current_metrics['Paso'], current_metrics['Entropia'], 
+             color='#1f77b4', label='Entropía')
+    ax2.set_xlabel('Paso de simulación')
+    ax2.set_ylabel('Entropía', color='#1f77b4')
+    ax2.tick_params(axis='y', labelcolor='#1f77b4')
+    
+    # Gradiente (eje secundario)
+    ax3 = ax2.twinx()
+    ax3.plot(current_metrics['Paso'], current_metrics['GradientePromedio'], 
+             color='#d62728', label='Gradiente')
+    ax3.set_ylabel('Gradiente promedio', color='#d62728')
+    ax3.tick_params(axis='y', labelcolor='#d62728')
+    
+    # Línea vertical indicando el paso actual
+    ax2.axvline(x=step, color='#2ca02c', linestyle='--', alpha=0.7)
+    
+    # Leyenda combinada
+    lines, labels = ax2.get_legend_handles_labels()
+    lines2, labels2 = ax3.get_legend_handles_labels()
+    ax2.legend(lines + lines2, labels + labels2, loc='upper left')
+    
+    # Ajustar layout
+    plt.tight_layout()
+    
+    # Guardar figura
+    output_file = os.path.join(output_dir, f"bz_frame_{step:06d}.png")
+    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    return output_file
+
+def create_animation(frames_pattern, output_dir, fps=15):
+    """Crea una animación a partir de los frames generados"""
+    import imageio.v2 as imageio
+    
+    frame_files = sorted(glob.glob(frames_pattern))
+    if not frame_files:
+        raise FileNotFoundError("No se encontraron frames para crear la animación")
+    
+    # Leer frames
+    images = []
+    for filename in tqdm(frame_files, desc="Creando animación"):
+        images.append(imageio.imread(filename))
+    
+    # Guardar animación
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(output_dir, f"bz_animation_{timestamp}.mp4")
+    
+    # Usar imageio para crear el video
+    imageio.mimsave(output_file, images, fps=fps, 
+                   codec='libx264', quality=8, 
+                   pixelformat='yuv420p')
+    
+    return output_file
+
+def plot_metrics_comparison(metrics, output_dir, geometry_name):
+    """Genera un gráfico comparativo de las métricas"""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    
+    # Título principal
+    fig.suptitle(f'Análisis de Simulación BZ - {geometry_name}', y=1.02)
+    
+    # Gráfico de Entropía
+    ax1.plot(metrics['Paso'], metrics['Entropia'], 
+             color='#1f77b4', label='Entropía Normalizada')
+    ax1.set_ylabel('Entropía Normalizada')
+    ax1.grid(True, linestyle='--', alpha=0.3)
+    ax1.legend()
+    
+    # Gráfico de Gradiente
+    ax2.plot(metrics['Paso'], metrics['GradientePromedio'], 
+             color='#d62728', label='Gradiente Promedio')
+    ax2.set_xlabel('Paso de Simulación')
+    ax2.set_ylabel('Magnitud del Gradiente')
+    ax2.grid(True, linestyle='--', alpha=0.3)
+    ax2.legend()
+    
+    # Ajustar layout
+    plt.tight_layout()
+    
+    # Guardar figura
+    output_file = os.path.join(output_dir, "bz_metrics_comparison.png")
+    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    return output_file
+
+# ===== FUNCIÓN PRINCIPAL =====
+def main():
+    print("\n=== Generador de Visualizaciones para Simulación BZ ===\n")
+    
+    # Encontrar la carpeta de simulación
+    simulation_folder = find_simulation_folder()
+    if not simulation_folder:
+        raise FileNotFoundError("No se encontraron carpetas de simulación BZ_Geometry_*")
+    
+    print(f"Procesando simulación en: {simulation_folder}")
+    
+    # Obtener información de la geometría
+    geometry_type = simulation_folder.split('_')[-1]
+    geometry_names = {
+        '1': 'Focos Circulares',
+        '2': 'Línea Horizontal',
+        '3': 'Cuadrado Central',
+        '4': 'Patrón Hexagonal',
+        '5': 'Cruz Central'
+    }
+    geometry_name = geometry_names.get(geometry_type, f"Geometría {geometry_type}")
+    
+    # Cargar métricas
     try:
-        # Leer el archivo TXT
-        with open(txt_files[0], 'r') as f:
-            lines = f.readlines()
-            
-        # Buscar las líneas de datos (asumiendo un formato específico)
-        data_lines = []
-        for line in lines:
-            if line.strip() and not line.startswith('===') and not line.startswith('Datos'):
-                parts = line.strip().split()
-                if len(parts) >= 3 and parts[0].isdigit():
-                    data_lines.append(parts[:3])
-                    
-        if not data_lines:
-            raise ValueError("No se encontraron datos válidos en el archivo TXT")
-            
-        # Convertir a array estructurado
-        data = np.zeros(len(data_lines), dtype=[('step', 'i4'), ('entropy', 'f8'), ('gradient', 'f8')])
-        for i, line in enumerate(data_lines):
-            data[i]['step'] = int(line[0])
-            data[i]['entropy'] = float(line[1])
-            data[i]['gradient'] = float(line[2])
-            
-        # Normalizar entropía si es necesario
-        if np.max(data['entropy']) > 1:
-            data['entropy'] = data['entropy'] / np.max(data['entropy'])
-            
-        return data
+        metrics = load_metrics(simulation_folder)
+        print(f"Datos cargados: {len(metrics)} pasos de simulación")
     except Exception as e:
-        print(f"Error al cargar TXT: {str(e)}")
-        return None
+        print(f"Error al cargar métricas: {str(e)}")
+        return
+    
+    # Crear directorio de salida
+    output_dir = create_output_directory()
+    print(f"Resultados se guardarán en: {output_dir}")
+    
+    # Encontrar archivos de datos disponibles
+    data_files = glob.glob(os.path.join(simulation_folder, "bz_*.csv"))
+    if not data_files:
+        print("No se encontraron archivos de datos de simulación (*.csv)")
+        return
+    
+    # Extraer pasos disponibles
+    steps = sorted([int(f.split('_')[-1].split('.')[0]) for f in data_files])
+    steps = [s for s in steps if s <= 140000]  # <-- AÑADE ESTA LÍNEA JUSTO AQUÍ
+    print(f"Encontrados {len(steps)} frames de simulación (desde {steps[0]} hasta {steps[-1]})")
+    
+    # Generar imágenes para cada paso
+    print("\nGenerando imágenes de simulación...")
+    frame_files = []
+    for step in tqdm(steps, desc="Procesando pasos"):
+        try:
+            data = load_simulation_data(simulation_folder, step)
+            frame_file = plot_single_frame(data, step, metrics, output_dir, geometry_name)
+            frame_files.append(frame_file)
+        except Exception as e:
+            print(f"\nError procesando paso {step}: {str(e)}")
+            continue
+    
+    # Crear gráfico comparativo de métricas
+    try:
+        metrics_file = plot_metrics_comparison(metrics, output_dir, geometry_name)
+        print(f"\nGr\u00e1fico de métricas guardado: {metrics_file}")
+    except Exception as e:
+        print(f"\nError al generar gráfico de métricas: {str(e)}")
+    
+    # Crear animación (opcional)
+    create_anim = input("\n¿Desea crear una animación? (s/n): ").strip().lower() == 's'
+    if create_anim and frame_files:
+        try:
+            fps = int(input("Ingrese los FPS para la animación (15 por defecto): ") or 15)
+            frames_pattern = os.path.join(output_dir, "bz_frame_*.png")
+            anim_file = create_animation(frames_pattern, output_dir, fps)
+            print(f"\nAnimación guardada: {anim_file}")
+        except Exception as e:
+            print(f"\nError al crear animación: {str(e)}")
 
-# ===== CARGA DE DATOS =====
-simulation_folder = find_simulation_folder()
-if not simulation_folder:
-    raise FileNotFoundError("No se encontraron carpetas de simulación BZ_*")
-
-print(f"\nProcesando simulación en: {simulation_folder}")
-
-# Obtener información de la geometría
-geometry_type = simulation_folder.split('_')[-1] if '_' in simulation_folder else '5'
-geometry_names = {
-    '1': 'Focos Circulares',
-    '2': 'Línea Horizontal',
-    '3': 'Cuadrado Central',
-    '4': 'Patrón Hexagonal',
-    '5': 'Cruz Central'
-}
-geometry_name = geometry_names.get(geometry_type, f"Geometría {geometry_type}")
-
-# Intentar cargar datos primero desde CSV, luego desde TXT
-metrics_data = load_metrics_csv(simulation_folder)
-if metrics_data is None:
-    print("Intentando cargar desde archivo TXT...")
-    metrics_data = load_metrics_txt(simulation_folder)
-    if metrics_data is None:
-        raise ValueError("No se pudieron cargar datos ni desde CSV ni desde TXT")
-
-# Filtrar datos hasta el paso 140,000
-max_step = 140000
-filter_mask = metrics_data['step'] <= max_step
-filtered_steps = metrics_data['step'][filter_mask]
-filtered_entropy = metrics_data['entropy'][filter_mask]
-filtered_gradient = metrics_data['gradient'][filter_mask]
-
-if len(filtered_steps) == 0:
-    raise ValueError(f"No hay datos dentro del rango hasta {max_step} pasos")
-
-# ===== VISUALIZACIÓN =====
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-fig.suptitle(f'Análisis de Simulación BZ - {geometry_name}\n(Pasos 0-{max_step:,})', 
-             fontsize=18, y=1.02)
-
-# Gráfico de Entropía (arriba)
-ax1.plot(filtered_steps, filtered_entropy, 
-        color=colors['entropy'], 
-        label='Entropía Normalizada',
-        alpha=0.8)
-
-# Resaltar puntos clave en entropía
-max_ent_idx = np.argmax(filtered_entropy)
-ax1.scatter(filtered_steps[max_ent_idx], filtered_entropy[max_ent_idx],
-           color=colors['highlight'], s=100, zorder=5,
-           label=f'Máx: {filtered_entropy[max_ent_idx]:.3f}')
-
-# Configuración eje Y izquierdo (entropía)
-ax1.set_ylabel('Entropía Normalizada', color=colors['entropy'])
-ax1.tick_params(axis='y', labelcolor=colors['entropy'])
-ax1.grid(True, linestyle='--', alpha=0.4)
-ax1.legend(loc='upper left')
-
-# Gráfico de Gradiente (abajo)
-ax2.plot(filtered_steps, filtered_gradient, 
-        color=colors['gradient'], 
-        label='Gradiente Promedio',
-        alpha=0.8)
-
-# Resaltar puntos clave en gradiente
-max_grad_idx = np.argmax(filtered_gradient)
-ax2.scatter(filtered_steps[max_grad_idx], filtered_gradient[max_grad_idx],
-           color=colors['highlight'], s=100, zorder=5,
-           label=f'Máx: {filtered_gradient[max_grad_idx]:.3f}')
-
-# Configuración eje X compartido y eje Y derecho (gradiente)
-ax2.set_xlabel('Paso de Simulación')
-ax2.set_ylabel('Magnitud del Gradiente', color=colors['gradient'])
-ax2.tick_params(axis='y', labelcolor=colors['gradient'])
-ax2.grid(True, linestyle='--', alpha=0.4)
-ax2.legend(loc='upper left')
-
-# Ajustar límites del eje X
-ax2.set_xlim(0, max_step)
-
-# Añadir línea vertical en puntos clave
-for ax in [ax1, ax2]:
-    ax.axvline(x=filtered_steps[max_ent_idx], color=colors['entropy'], 
-              linestyle=':', alpha=0.5)
-    ax.axvline(x=filtered_steps[max_grad_idx], color=colors['gradient'], 
-              linestyle=':', alpha=0.5)
-
-# Añadir estadísticas combinadas
-stats_text = (f"Entropía: Media={np.mean(filtered_entropy):.3f} ± {np.std(filtered_entropy):.3f}\n"
-             f"Gradiente: Media={np.mean(filtered_gradient):.3f} ± {np.std(filtered_gradient):.3f}")
-fig.text(0.98, 0.02, stats_text, ha='right', va='bottom', fontsize=10,
-        bbox=dict(facecolor='white', alpha=0.8, edgecolor='gray'))
-
-# Optimizar espacio
-plt.tight_layout()
-
-# Guardar figura
-output_filename = f"BZ_Analysis_{geometry_name.replace(' ', '_')}_0-{max_step}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-fig.savefig(output_filename, bbox_inches='tight', dpi=150)
-print(f"\nGr\u00e1fico guardado como: {output_filename}")
-
-plt.show()
+if __name__ == "__main__":
+    main()
