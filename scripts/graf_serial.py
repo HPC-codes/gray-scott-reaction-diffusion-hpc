@@ -247,12 +247,11 @@ def main():
         print(f"\nGr\u00e1fico de métricas guardado: {metrics_file}")
     except Exception as e:
         print(f"\nError al generar gráfico de métricas: {str(e)}")
-    
-    # Crear animación (opcional)
+        # Crear animación (opcional)
     create_anim = input("\n¿Desea crear una animación? (s/n): ").strip().lower() == 's'
     if create_anim and frame_files:
         try:
-            fps = int(input("Ingrese los FPS para la animación (15 por defecto): ") or 15
+            fps = int(input("Ingrese los FPS para la animación (15 por defecto): ") or 15)
             frames_pattern = os.path.join(output_dir, "bz_frame_*.png")
             anim_file = create_animation(frames_pattern, output_dir, fps)
             print(f"\nAnimación guardada: {anim_file}")
