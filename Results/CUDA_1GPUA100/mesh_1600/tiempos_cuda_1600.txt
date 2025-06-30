@@ -1,0 +1,10 @@
+=== Resultados ===
+=== Tiempos de ejecución ===
+Inicialización: 0.1230 s
+Simulación principal: 48.4344 s
+Guardado de datos: 0.8088 s
+Cálculo de entropía: 3.1019 s
+Cálculo de gradiente: 1.6138 s
+Métricas y escritura: 4.7531 s
+---------------------------------
+Datos guardados en:
