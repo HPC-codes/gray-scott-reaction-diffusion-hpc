@@ -80,6 +80,57 @@ def create_output_directory():
     return output_dir
 
 # ===== FUNCIONES DE VISUALIZACIÓN =====
+def generate_metrics_image(metrics, output_dir, geometry_name):
+    """Genera una imagen resumen de métricas hasta el paso 140,000"""
+    # Filtrar métricas hasta 140,000
+    metrics = metrics[metrics['Paso'] <= 140000]
+    
+    # Configurar la figura
+    fig = plt.figure(figsize=(10, 8))
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+    
+    # Crear texto con las métricas
+    metrics_text = (
+        "# Entropía Normalizada\n"
+        f"- Máx: {metrics['Entropia'].max():.3f}\n\n"
+        "## Gradiente Promedio\n"
+        f"- Máx: {metrics['GradientePromedio'].max():.3f}\n\n"
+        "## Paso de Simulación\n"
+        f"- Entropía: Media={metrics['Entropia'].mean():.3f} ± {metrics['Entropia'].std():.3f}\n"
+        f"- Gradiente: Media={metrics['GradientePromedio'].mean():.3f} ± {metrics['GradientePromedio'].std():.3f}\n\n"
+        "---\n\n"
+        "### Diagrama\n"
+        "- **Máx**: 0.002\n"
+        "- **Fonte**:\n"
+        "  - 20000\n"
+        "  - 40000\n"
+        "  - 60000\n"
+        "  - 80000\n"
+        "  - 100000\n"
+        "  - 120000\n"
+        "  - 140000"
+    )
+    
+    # Añadir texto a la figura
+    plt.text(0.5, 0.5, metrics_text, 
+             ha='center', va='center', 
+             fontsize=14, family='monospace',
+             bbox=dict(facecolor='white', alpha=0.9))
+    
+    # Ocultar ejes
+    plt.axis('off')
+    
+    # Título
+    plt.suptitle(f"Resumen de Métricas BZ - {geometry_name}\n(0 a 140,000 pasos)", 
+                 y=0.95, fontsize=16)
+    
+    # Guardar figura
+    output_file = os.path.join(output_dir, "bz_metrics_summary.png")
+    plt.savefig(output_file, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    return output_file
+
 def plot_single_frame(data, step, metrics, output_dir, geometry_name):
     """Genera una imagen individual para un paso de simulación"""
     fig, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(10, 12))
@@ -219,15 +270,24 @@ def main():
     output_dir = create_output_directory()
     print(f"Resultados se guardarán en: {output_dir}")
     
+    # Generar la imagen resumen de métricas (nueva funcionalidad)
+    try:
+        summary_file = generate_metrics_image(metrics, output_dir, geometry_name)
+        print(f"\nResumen de métricas guardado: {summary_file}")
+    except Exception as e:
+        print(f"\nError al generar resumen de métricas: {str(e)}")
+    
+    # [El resto de tu código original permanece igual...]
+    
     # Encontrar archivos de datos disponibles
     data_files = glob.glob(os.path.join(simulation_folder, "bz_*.csv"))
     if not data_files:
         print("No se encontraron archivos de datos de simulación (*.csv)")
         return
     
-    # Extraer pasos disponibles
+    # Extraer pasos disponibles y filtrar hasta 140,000
     steps = sorted([int(f.split('_')[-1].split('.')[0]) for f in data_files])
-    steps = [s for s in steps if s <= 140000]  # <-- AÑADE ESTA LÍNEA JUSTO AQUÍ
+    steps = [s for s in steps if s <= 140000]
     print(f"Encontrados {len(steps)} frames de simulación (desde {steps[0]} hasta {steps[-1]})")
     
     # Generar imágenes para cada paso
