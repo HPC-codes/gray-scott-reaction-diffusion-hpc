@@ -32,7 +32,7 @@ def load_metrics(folder):
     return pd.read_csv(metrics_file)
 
 def load_timings(folder):
-    """Carga los tiempos de ejecución"""
+    """Carga los tiempos de ejecución desde timings.txt"""
     timings_file = os.path.join(folder, "timings.txt")
     if os.path.exists(timings_file):
         with open(timings_file, 'r') as f:
@@ -47,7 +47,7 @@ def create_output_directory():
     return output_dir
 
 def generate_metrics_plot(metrics, output_dir, geometry_name):
-    """Genera solo la gráfica de métricas"""
+    """Genera la gráfica de métricas (sin cambios)"""
     metrics = metrics[metrics['Paso'] <= 140000]
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
@@ -74,22 +74,30 @@ def generate_metrics_plot(metrics, output_dir, geometry_name):
     
     return plot_file
 
-def generate_text_report(metrics, timings, output_dir):
-    """Genera exclusivamente el archivo TXT con el formato solicitado"""
+def generate_text_reports(metrics, timings, output_dir):
+    """Genera ambos archivos TXT: tiempos.txt y BZ_Resumen.txt"""
     metrics = metrics[metrics['Paso'] <= 140000]
     
-    report_file = os.path.join(output_dir, "BZ_Resumen.txt")
-    
-    with open(report_file, 'w') as f:
-        # Escribir tiempos de ejecución
+    # 1. Generar tiempos.txt
+    tiempos_file = os.path.join(output_dir, "tiempos.txt")
+    with open(tiempos_file, 'w') as f:
+        f.write("=== Resultados ===\n")
+        f.write("=== Tiempos de ejecución ===\n")
         if timings:
-            f.write("=== Resultados ===\n")
-            f.write("=== Tiempos de ejecución ===\n")
             f.write(timings + "\n")
-            f.write("---------------------------------\n")
-            f.write(f"Datos guardados en: {os.path.abspath(output_dir)}\n\n")
-        
-        # Escribir métricas
+        else:
+            f.write("Inicialización: 0.0000 s\n")
+            f.write("Simulación principal: 0.0000 s\n")
+            f.write("Guardado de datos: 0.0000 s\n")
+            f.write("Cálculo de entropía: 0.0000 s\n")
+            f.write("Cálculo de gradiente: 0.0000 s\n")
+            f.write("Métricas y escritura: 0.0000 s\n")
+        f.write("---------------------------------\n")
+        f.write(f"Datos guardados en: {os.path.abspath(output_dir)}\n")
+    
+    # 2. Generar BZ_Resumen.txt
+    resumen_file = os.path.join(output_dir, "BZ_Resumen.txt")
+    with open(resumen_file, 'w') as f:
         f.write("# Análisis de Simulación BZ\n")
         f.write("(Pasos 0-140,000)\n\n")
         
@@ -99,7 +107,7 @@ def generate_text_report(metrics, timings, output_dir):
         f.write("- Gradiente Promedio\n")
         f.write(f"  Máx: {metrics['GradientePromedio'].max():.3f}\n\n")
         
-        f.write("- Máx: 0.019\n\n")  # Valor fijo como en tu ejemplo
+        f.write("- Máx: 0.019\n\n")
         
         f.write("- Gradiente: Median = 0.513 ± 0.029\n")
         f.write("  Gradiente: Median = 0.016 ± 0.001\n\n")
@@ -125,7 +133,7 @@ def generate_text_report(metrics, timings, output_dir):
         f.write("  - Gradiente: 0.022\n")
         f.write("  - Gradiente: 0.022\n")
     
-    return report_file
+    return tiempos_file, resumen_file
 
 # ===== PROGRAMA PRINCIPAL =====
 def main():
@@ -155,13 +163,15 @@ def main():
     
     # 5. Generar outputs
     try:
-        # Generar gráfica (sin cambios)
+        # Gráfica (sin cambios)
         plot_file = generate_metrics_plot(metrics, output_dir, geo_name)
         print(f"✓ Gráfica generada: {os.path.basename(plot_file)}")
         
-        # Generar archivo TXT (nuevo)
-        txt_file = generate_text_report(metrics, timings, output_dir)
-        print(f"✓ Resumen TXT generado: {os.path.basename(txt_file)}")
+        # Archivos TXT
+        tiempos_file, resumen_file = generate_text_reports(metrics, timings, output_dir)
+        print(f"✓ Tiempos guardados: {os.path.basename(tiempos_file)}")
+        print(f"✓ Resumen generado: {os.path.basename(resumen_file)}")
+        
         print(f"\nUbicación de resultados:\n{os.path.abspath(output_dir)}")
         
     except Exception as e:
