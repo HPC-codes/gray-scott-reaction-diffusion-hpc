@@ -31,6 +31,14 @@ def load_metrics(folder):
         raise FileNotFoundError("No se encontró el archivo de métricas")
     return pd.read_csv(metrics_file)
 
+def load_timings(folder):
+    """Carga los tiempos de ejecución si existen"""
+    timings_file = os.path.join(folder, "timings.txt")
+    if os.path.exists(timings_file):
+        with open(timings_file, 'r') as f:
+            return f.read()
+    return None
+
 def create_output_directory():
     """Crea un directorio para guardar los resultados"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -38,8 +46,8 @@ def create_output_directory():
     os.makedirs(output_dir, exist_ok=True)
     return output_dir
 
-def generate_full_report(metrics, output_dir, geometry_name):
-    """Genera el reporte completo con gráfica y resumen"""
+def generate_full_report(metrics, timings, output_dir, geometry_name):
+    """Genera el reporte completo con gráfica, resumen y tiempos"""
     # Filtrar datos hasta 140,000 pasos
     metrics = metrics[metrics['Paso'] <= 140000]
     
@@ -69,11 +77,10 @@ def generate_full_report(metrics, output_dir, geometry_name):
     plt.savefig(plot_file, bbox_inches='tight')
     plt.close()
     
-    # ===== 2. CREAR RESUMEN TEXTO =====
+    # ===== 2. CREAR RESUMEN TEXTO (PNG) =====
     fig = plt.figure(figsize=(10, 6))
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
     
-    # Texto con formato
     summary_text = (
         "# Análisis de Simulación BZ - {}\n"
         "**(Pasos 0-140,000)**\n\n"
@@ -107,12 +114,24 @@ def generate_full_report(metrics, output_dir, geometry_name):
              fontsize=12, family='monospace')
     plt.axis('off')
     
-    # Guardar resumen
+    # Guardar resumen visual
     text_file = os.path.join(output_dir, "BZ_Resumen_Texto.png")
     plt.savefig(text_file, bbox_inches='tight')
     plt.close()
     
-    return plot_file, text_file
+    # ===== 3. CREAR ARCHIVO DE TIEMPOS (TXT) =====
+    if timings:
+        timings_file = os.path.join(output_dir, "BZ_Tiempos_Ejecucion.txt")
+        with open(timings_file, 'w') as f:
+            f.write("=== Resultados ===\n")
+            f.write("=== Tiempos de ejecución ===\n")
+            f.write(timings)
+            f.write(f"\n---------------------------------\n")
+            f.write(f"Datos guardados en: {os.path.abspath(output_dir)}")
+        
+        return plot_file, text_file, timings_file
+    else:
+        return plot_file, text_file, None
 
 # ===== PROGRAMA PRINCIPAL =====
 def main():
@@ -124,9 +143,10 @@ def main():
         print("ERROR: No se encontraron carpetas BZ_Geometry_*")
         return
     
-    # 2. Cargar métricas
+    # 2. Cargar métricas y tiempos
     try:
         metrics = load_metrics(folder)
+        timings = load_timings(folder)
         print(f"✓ Datos cargados ({len(metrics)} pasos totales)")
     except Exception as e:
         print(f"ERROR: {str(e)}")
@@ -140,9 +160,11 @@ def main():
     # 4. Crear reporte completo
     output_dir = create_output_directory()
     try:
-        plot_file, text_file = generate_full_report(metrics, output_dir, geo_name)
-        print(f"✓ Gráfica generada:\n{os.path.abspath(plot_file)}")
-        print(f"✓ Resumen generado:\n{os.path.abspath(text_file)}")
+        results = generate_full_report(metrics, timings, output_dir, geo_name)
+        print(f"✓ Gráfica generada:\n{os.path.abspath(results[0])}")
+        print(f"✓ Resumen generado:\n{os.path.abspath(results[1])}")
+        if results[2]:
+            print(f"✓ Tiempos guardados:\n{os.path.abspath(results[2])}")
     except Exception as e:
         print(f"ERROR al generar reporte: {str(e)}")
 
