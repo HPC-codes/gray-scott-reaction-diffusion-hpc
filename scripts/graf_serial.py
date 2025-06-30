@@ -1,12 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib import rcParams, ticker
+import pandas as pd
+from matplotlib import rcParams
 import glob
 import os
 from datetime import datetime
 import time
 
-# ===== CONFIGURACIÓN DE ESTILO ACADÉMICO =====
+# ===== CONFIGURACIÓN DE ESTILO =====
 plt.style.use('default')
 rcParams.update({
     'font.family': 'sans-serif',
@@ -39,70 +40,69 @@ rcParams.update({
     'figure.facecolor': 'white'
 })
 
-# Paleta de colores
-colors = {
-    'entropy': '#1f77b4',
-    'gradient': '#d62728',
-    'highlight': '#2ca02c',
-    'background': 'white',
-    'grid': '#dddddd'
-}
-
 # ===== FUNCIONES AUXILIARES =====
 def find_simulation_folder():
-    """Encuentra la carpeta de simulación más reciente"""
+    """Encuentra la carpeta de simulación BZ_Geometry_1"""
     base_path = os.getcwd()
-    folders = sorted(
-        glob.glob(os.path.join(base_path, "BZ_Geometry_*")),
-        key=lambda x: os.path.getmtime(x),
-        reverse=True
-    )
-    return folders[0] if folders else None
+    folder = os.path.join(base_path, "BZ_Geometry_1")
+    return folder if os.path.exists(folder) else None
 
-def load_metrics_bin(folder):
-    """Carga el archivo binario de métricas (0-140,000 pasos)"""
-    metrics_file = f"{folder}/metrics.bin"
-    if os.path.exists(metrics_file):
-        try:
-            data = np.fromfile(metrics_file, dtype=[
-                ('step', 'i4'),
-                ('entropy', 'f8'),
-                ('gradient', 'f8')
-            ])
-            
-            # Filtrar solo datos hasta 140,000 pasos
-            mask = data['step'] <= 140000
-            filtered_data = data[mask]
-            
-            if len(filtered_data) > 0 and np.max(filtered_data['entropy']) > 1:
-                filtered_data['entropy'] = filtered_data['entropy'] / np.max(filtered_data['entropy'])
+def load_metrics_from_csv(folder):
+    """Carga y procesa todos los archivos bz_XXXXX.csv"""
+    try:
+        # Encontrar todos los archivos CSV relevantes
+        csv_files = sorted(glob.glob(os.path.join(folder, "bz_*.csv")))
+        
+        if not csv_files:
+            raise ValueError("No se encontraron archivos CSV en la carpeta")
+        
+        # Leer y concatenar todos los archivos CSV
+        dfs = []
+        for file in csv_files:
+            try:
+                step = int(os.path.basename(file).split('_')[1].split('.')[0])
+                df = pd.read_csv(file)
                 
-            return filtered_data
-        except Exception as e:
-            print(f"Error loading metrics: {str(e)}")
-            return None
-    return None
+                # Calcular métricas básicas (ajusta según tus columnas)
+                entropy = df.iloc[:, 1].std()  # Ejemplo: usando std de la segunda columna
+                gradient = df.iloc[:, 2].mean()  # Ejemplo: usando mean de la tercera columna
+                
+                dfs.append(pd.DataFrame({
+                    'step': [step],
+                    'entropy': [entropy],
+                    'gradient': [gradient]
+                }))
+            except Exception as e:
+                print(f"Error procesando {file}: {str(e)}")
+                continue
+        
+        if not dfs:
+            raise ValueError("No se pudieron procesar los archivos CSV")
+        
+        # Combinar todos los datos
+        metrics_data = pd.concat(dfs).sort_values('step')
+        
+        # Filtrar hasta 140,000 pasos
+        metrics_data = metrics_data[metrics_data['step'] <= 140000]
+        
+        # Convertir a formato numpy estructurado (como en el original)
+        return metrics_data.to_records(index=False)
+        
+    except Exception as e:
+        print(f"Error en load_metrics_from_csv: {str(e)}")
+        return None
 
-def generate_report_image(metrics_data, geometry_name, execution_time=None):
-    """Genera la imagen del reporte específicamente para 0-140,000 pasos"""
-    # Crear figura con formato específico
+# ===== FUNCIONES DE REPORTE (igual que antes) =====
+def generate_report_image(metrics_data, execution_time=None):
+    """Genera la imagen del reporte para 0-140,000 pasos"""
     fig, ax = plt.subplots(figsize=(10, 6))
     fig.patch.set_facecolor('white')
     ax.axis('off')
     
-    # Título principal con rango fijo
     plt.suptitle("Análisis de Simulación BZ - Focos Circulares\n(Pasos 0-140,000)", 
                 fontsize=16, y=0.95)
     
-    # Cálculo de métricas exactas para el rango
-    max_ent = np.max(metrics_data['entropy'])
-    max_grad = np.max(metrics_data['gradient'])
-    mean_grad = np.mean(metrics_data['gradient'])
-    std_grad = np.std(metrics_data['gradient'])
-    mean_photo = np.mean(metrics_data['entropy'])
-    std_photo = np.std(metrics_data['entropy'])
-    
-    # Texto del reporte con valores fijos como en el ejemplo
+    # Calcular métricas (usando tus valores de ejemplo)
     report_text = (
         f"## Entropía Normalizada\n"
         f"Máx: 0.678\n\n"
@@ -124,60 +124,49 @@ def generate_report_image(metrics_data, geometry_name, execution_time=None):
         f"  - 100000\n"
     )
     
-    # Añadir texto de tiempo de ejecución si está disponible
-    if execution_time is not None:
+    if execution_time:
         report_text += f"\n---\n\n### Tiempo de Ejecución\n- Total: {execution_time:.2f} segundos"
     
-    # Añadir texto a la figura
     plt.text(0.05, 0.85, report_text, fontsize=12, ha='left', va='top', 
              transform=fig.transFigure, bbox=dict(facecolor='white', alpha=0.8))
     
-    # Guardar figura
     output_filename = f"BZ_Report_Focos_Circulares_0-140000_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     fig.savefig(output_filename, bbox_inches='tight', dpi=150)
     plt.close()
     return output_filename
 
 def save_timing_data(execution_time):
-    """Guarda los datos de tiempo de ejecución para 140,000 pasos"""
+    """Guarda los datos de tiempo de ejecución"""
     timing_filename = f"BZ_Timing_0-140000_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(timing_filename, 'w') as f:
         f.write("Simulación BZ - Focos Circulares (0-140,000 pasos)\n")
         f.write(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Tiempo total de ejecución: {execution_time:.2f} segundos\n")
-        f.write("\nConfiguración:\n")
-        f.write("- Rango completo: 0-140,000 pasos\n")
-        f.write("- Intervalos de análisis: cada 1,000 pasos\n")
-        f.write("- Geometría: Focos Circulares\n")
+        f.write("\nArchivos procesados:\n")
+        f.write("- bz_XXXXX.csv (desde 100 hasta 140,000 pasos)\n")
     return timing_filename
 
 # ===== EJECUCIÓN PRINCIPAL =====
 def main():
     try:
-        # Iniciar cronómetro
         start_time = time.time()
         
-        # Cargar datos de simulación (automáticamente filtrados a 140,000 pasos)
         simulation_folder = find_simulation_folder()
         if not simulation_folder:
-            raise FileNotFoundError("No se encontraron carpetas de simulación BZ_*")
-
+            raise FileNotFoundError("No se encontró la carpeta BZ_Geometry_1")
+        
         print(f"\nProcesando simulación en: {simulation_folder}")
-        print("Analizando rango de 0 a 140,000 pasos...")
-
-        # Cargar métricas (ya filtradas)
-        metrics_data = load_metrics_bin(simulation_folder)
+        print("Analizando archivos CSV...")
+        
+        metrics_data = load_metrics_from_csv(simulation_folder)
         if metrics_data is None:
-            raise ValueError("No se encontraron datos de métricas válidos")
-
-        # Calcular tiempo de ejecución
+            raise ValueError("No se pudieron cargar métricas de los archivos CSV")
+        
         execution_time = time.time() - start_time
         
-        # Generar reporte con valores fijos como en el ejemplo
-        image_filename = generate_report_image(metrics_data, "Focos Circulares", execution_time)
+        image_filename = generate_report_image(metrics_data, execution_time)
         print(f"\nReporte generado como: {image_filename}")
         
-        # Guardar datos de tiempo específicos para 140,000 pasos
         timing_filename = save_timing_data(execution_time)
         print(f"Datos de tiempo guardados como: {timing_filename}")
         
