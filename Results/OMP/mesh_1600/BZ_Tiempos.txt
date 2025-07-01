@@ -1,0 +1,9 @@
+=== Simulación Belousov-Zhabotinsky ===
+Tamaño: 1600x1600 | Pasos: 150000
+Geometría: 1 | Focos: 20
+Entropía inicial: 0.00391825
+Progreso: 150000/150000 | Entropía: 0.5014 | ∇: 0.0155
+
+=== Simulación completada ===
+Tiempo total: 3434.1488 s
+Datos guardados en: BZ_Geometry_1/
