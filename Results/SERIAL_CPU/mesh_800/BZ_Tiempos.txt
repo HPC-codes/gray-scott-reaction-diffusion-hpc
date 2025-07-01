@@ -1,10 +1,14 @@
 === Resultados ===
 === Tiempos de ejecución ===
-Inicialización: 0.0000 s
-Simulación principal: 0.0442 s
-Guardado de datos: 0.5230 s
-Cálculo de entropía: 0.0011 s
-Cálculo de gradiente: 0.0063 s
-Métricas y escritura: 0.3695 s
+Inicialización: 0.0040 s
+Simulación principal: 278.4126 s
+Guardado de datos: 60.1888 s
+Cálculo de entropía: 0.3787 s
+Cálculo de gradiente: 0.5242 s
+Métricas y escritura: 0.9077 s
 ---------------------------------
-Datos guardados en: /content/gray-scott-reaction-diffusion-hpc/gray-scott-reaction-diffusion-hpc/BZ_Visualization_20250701_004801
+Suma de tiempos parciales: 340.4160 s
+Tiempo total medido: 287.3278 s
+Datos guardados en:
+- BZ_Geometry_1/bz_XXXXX.csv (patrones espaciales)
+- BZ_Geometry_1/metrics.csv (métricas cuantitativas)
