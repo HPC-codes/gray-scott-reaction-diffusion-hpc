@@ -1,0 +1,7 @@
+=== Tiempos de Ejecución ===
+Búsqueda de carpeta: 0.0016 s
+Carga de métricas: 0.0445 s
+Creación de directorio: 0.0014 s
+Carga de datos: 0.4259 s
+---------------------------------
+Ubicación de resultados: /content/gray-scott-reaction-diffusion-hpc/gray-scott-reaction-diffusion-hpc/gray-scott-reaction-diffusion-hpc/BZ_Visualization_20250701_034421
