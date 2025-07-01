@@ -4,7 +4,7 @@ NVCC = nvcc
 MPICC = mpicxx
 
 # === Directorios ===
-BASE_DIR = /content/gray-scott-reaction-diffusion-hpc
+BASE_DIR = .
 BIN_DIR = $(BASE_DIR)/bin
 DATA_DIR = $(BASE_DIR)/data
 SRC_DIR = $(BASE_DIR)/src
@@ -47,7 +47,7 @@ $(OMP_EXE): $(SRC_DIR)/OMP.cpp
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(OMPFLAGS) $< -o $@
 
-# === Reglas de ejecución individuales ===
+# === Reglas de ejecución ===
 run_serial: serial
 	@mkdir -p $(DATA_DIR)
 	@echo "Ejecutando versión Serial..."
