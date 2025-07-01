@@ -2,20 +2,23 @@
 #include <fstream>
 #include <vector>
 #include <cmath>
-#include <chrono>
 #include <random>
-#include <sys/stat.h>
-#include <ctime>
+#include <chrono>
 #include <iomanip>
+#include <sys/stat.h>
 #include <algorithm>
 #include <omp.h>
-#include <cmath>      // Para log
+#include <atomic>
+#include <queue>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 using namespace std;
 using namespace std::chrono;
 
 // ===== CONFIGURACIÓN =====
-int N;  // Ahora se define según entrada del usuario
+int N;  // Tamaño de la malla (N x N)
 const int steps = 150000;
 const int output_interval = 100;
 const double dt = 0.1;
@@ -25,19 +28,283 @@ const double Du = 0.20;
 const double Dv = 0.10;
 const double F = 0.026;
 const double k = 0.053;
-const double F_plus_k = F + k;  // Pre-calculado
+const double F_plus_k = F + k;
 
-using Grid = vector<vector<double>>;
+// Sistema de escritura asíncrona
+const int MAX_SAVE_THREADS = 4;
+struct SaveTask {
+    vector<double> data;
+    string filename;
+    int step;
+};
 
-// Prototipos
-void initialize_BZ(Grid& u, Grid& v, int geometry_type, int num_sources);
-inline double laplacian(const Grid& g, int i, int j);
-void create_directory(const string& path);
-void save_grid(const Grid& v, int iter, const string& output_dir);
-double calculate_normalized_entropy(const Grid& data);
-double calculate_average_gradient(const Grid& data);
-void print_geometry_options();
-void run_simulation(int num_threads, int N, int geometry_type, int num_sources, vector<double>& times);
+queue<SaveTask> save_queues[MAX_SAVE_THREADS];
+mutex queue_mutexes[MAX_SAVE_THREADS];
+condition_variable queue_cvs[MAX_SAVE_THREADS];
+atomic<bool> writers_running[MAX_SAVE_THREADS];
+vector<thread> writer_threads;
+
+// Función clamp para evitar conflictos
+template<typename T>
+const T& my_clamp(const T& v, const T& lo, const T& hi) {
+    return (v < lo) ? lo : (hi < v) ? hi : v;
+}
+
+// Función para calcular el laplaciano optimizado
+inline double laplacian(const vector<double>& grid, int i, int j, int N, double inv_dx_sq) {
+    const int im1 = (i == 0) ? N-1 : i-1;
+    const int ip1 = (i == N-1) ? 0 : i+1;
+    const int jm1 = (j == 0) ? N-1 : j-1;
+    const int jp1 = (j == N-1) ? 0 : j+1;
+
+    return (grid[ip1*N + j] + grid[im1*N + j] + 
+           grid[i*N + jp1] + grid[i*N + jm1] - 
+           4.0 * grid[i*N + j]) * inv_dx_sq;
+}
+
+// Writer thread function optimizada
+void writer_thread_function(int thread_id, const string& output_dir) {
+    while (writers_running[thread_id] || !save_queues[thread_id].empty()) {
+        unique_lock<mutex> lock(queue_mutexes[thread_id]);
+        queue_cvs[thread_id].wait(lock, [thread_id] {
+            return !save_queues[thread_id].empty() || !writers_running[thread_id];
+        });
+
+        if (!save_queues[thread_id].empty()) {
+            SaveTask task = move(save_queues[thread_id].front());
+            save_queues[thread_id].pop();
+            lock.unlock();
+
+            ofstream out(task.filename, ios::binary);
+            if (out.is_open()) {
+                out.write(reinterpret_cast<const char*>(&N), sizeof(int));
+                out.write(reinterpret_cast<const char*>(&N), sizeof(int));
+                out.write(reinterpret_cast<const char*>(task.data.data()), N*N*sizeof(double));
+                out.close();
+            }
+        }
+    }
+}
+
+// Inicialización completa con todas las geometrías
+void initialize_BZ(vector<double>& u, vector<double>& v, int N, int geometry_type, int num_sources) {
+    random_device rd;
+    vector<mt19937> gens(omp_get_max_threads());
+    for (auto& gen : gens) gen.seed(rd() + omp_get_thread_num());
+
+    #pragma omp parallel
+    {
+        uniform_real_distribution<> dis(0.0, 0.05);
+        int thread_num = omp_get_thread_num();
+        
+        #pragma omp for
+        for (int i = 0; i < N*N; ++i) {
+            u[i] = 0.8 + dis(gens[thread_num]);
+            v[i] = 0.001 * dis(gens[thread_num]);
+        }
+    }
+
+    const double radius = 8.0;
+    const double radius_sq = radius * radius;
+    const double center = N/2.0;
+    const double hex_size = N/5.0;
+    const double hex_const = hex_size * 0.866;
+
+    switch(geometry_type) {
+        case 1: { // Focos circulares
+            const double angle_step = 2.0 * M_PI / num_sources;
+            const double dist = N/3.5;
+
+            #pragma omp parallel for
+            for (int s = 0; s < num_sources; s++) {
+                double angle = angle_step * s;
+                double cx = center + dist * cos(angle);
+                double cy = center + dist * sin(angle);
+
+                int min_i = max(0, static_cast<int>(cx - radius - 1));
+                int max_i = min(N-1, static_cast<int>(cx + radius + 1));
+                int min_j = max(0, static_cast<int>(cy - radius - 1));
+                int max_j = min(N-1, static_cast<int>(cy + radius + 1));
+
+                for (int i = min_i; i <= max_i; ++i) {
+                    double dx = i - cx;
+                    for (int j = min_j; j <= max_j; ++j) {
+                        double dy = j - cy;
+                        if (dx*dx + dy*dy < radius_sq) {
+                            v[i*N + j] = 0.9;
+                            u[i*N + j] = 0.2;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case 2: { // Línea horizontal
+            int j_start = max(0, static_cast<int>(center-3));
+            int j_end = min(N-1, static_cast<int>(center+3));
+
+            #pragma omp parallel for
+            for (int i = 0; i < N; ++i) {
+                for (int j = j_start; j <= j_end; ++j) {
+                    v[i*N + j] = 0.9;
+                    u[i*N + j] = 0.2;
+                }
+            }
+            break;
+        }
+        case 3: { // Cuadrado central
+            int size = N/4;
+            int i_start = max(0, static_cast<int>(center-size));
+            int i_end = min(N-1, static_cast<int>(center+size));
+            int j_start = i_start, j_end = i_end;
+
+            #pragma omp parallel for
+            for (int i = i_start; i <= i_end; ++i) {
+                for (int j = j_start; j <= j_end; ++j) {
+                    v[i*N + j] = 0.9;
+                    u[i*N + j] = 0.2;
+                }
+            }
+            break;
+        }
+        case 4: { // Hexágono
+            int i_start = max(0, static_cast<int>(center-hex_size));
+            int i_end = min(N-1, static_cast<int>(center+hex_size));
+            int j_start = max(0, static_cast<int>(center-hex_const));
+            int j_end = min(N-1, static_cast<int>(center+hex_const));
+
+            #pragma omp parallel for
+            for (int i = i_start; i <= i_end; ++i) {
+                double dx_val = abs(i - center);
+                for (int j = j_start; j <= j_end; ++j) {
+                    double dy_val = abs(j - center);
+                    if (dx_val <= hex_size && dy_val <= hex_const &&
+                        (0.5*hex_size + 0.866*dy_val) <= hex_size) {
+                        v[i*N + j] = 0.9;
+                        u[i*N + j] = 0.2;
+                    }
+                }
+            }
+            break;
+        }
+        case 5: { // Cruz
+            int center_start = max(0, static_cast<int>(center-2));
+            int center_end = min(N-1, static_cast<int>(center+2));
+
+            // Parte horizontal
+            #pragma omp parallel for
+            for (int i = 0; i < N; ++i) {
+                for (int j = center_start; j <= center_end; ++j) {
+                    v[i*N + j] = 0.9;
+                    u[i*N + j] = 0.2;
+                }
+            }
+            // Parte vertical
+            #pragma omp parallel for
+            for (int j = 0; j < N; ++j) {
+                for (int i = center_start; i <= center_end; ++i) {
+                    v[i*N + j] = 0.9;
+                    u[i*N + j] = 0.2;
+                }
+            }
+            break;
+        }
+    }
+}
+
+// Guardado paralelo optimizado
+void save_grid_parallel(const vector<double>& v, int step, const string& output_dir) {
+    static atomic<int> next_queue(0);
+    int queue_id = next_queue++ % MAX_SAVE_THREADS;
+
+    SaveTask task;
+    task.data = v; // Copia los datos
+    task.filename = output_dir + "/bz_" + to_string(step) + ".bin";
+    task.step = step;
+
+    lock_guard<mutex> lock(queue_mutexes[queue_id]);
+    save_queues[queue_id].push(move(task));
+    queue_cvs[queue_id].notify_one();
+}
+
+// Cálculo de entropía completo
+double calculate_entropy(const vector<double>& v, int N) {
+    constexpr int bins = 20;
+    constexpr double bin_size = 1.0 / bins;
+    constexpr double log_bins = log(bins);
+    vector<int> hist(bins, 0);
+
+    #pragma omp parallel
+    {
+        vector<int> local_hist(bins, 0);
+        
+        #pragma omp for nowait
+        for (int i = 0; i < N*N; ++i) {
+            int bin = min(bins-1, static_cast<int>(v[i] / bin_size));
+            local_hist[bin]++;
+        }
+        
+        #pragma omp critical
+        {
+            for (int b = 0; b < bins; ++b) {
+                hist[b] += local_hist[b];
+            }
+        }
+    }
+
+    double entropy = 0.0;
+    const double inv_total = 1.0 / (N*N);
+
+    #pragma omp parallel for reduction(+:entropy)
+    for (int count : hist) {
+        if (count > 0) {
+            double p = count * inv_total;
+            entropy -= p * log(p);
+        }
+    }
+    return entropy / log_bins;
+}
+
+// Cálculo de gradiente completo
+double calculate_average_gradient(const vector<double>& v, int N) {
+    double total_grad = 0.0;
+    const double inv_2dx = 1.0 / (2.0 * dx);
+
+    #pragma omp parallel for reduction(+:total_grad)
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            int im1 = (i == 0) ? N-1 : i-1;
+            int ip1 = (i == N-1) ? 0 : i+1;
+            int jm1 = (j == 0) ? N-1 : j-1;
+            int jp1 = (j == N-1) ? 0 : j+1;
+
+            double grad_x = (v[ip1*N + j] - v[im1*N + j]) * inv_2dx;
+            double grad_y = (v[i*N + jp1] - v[i*N + jm1]) * inv_2dx;
+            total_grad += (fabs(grad_x) + fabs(grad_y));
+        }
+    }
+    return total_grad / (2.0 * N * N);
+}
+
+void print_geometry_options() {
+    cout << "================================\n"
+         << "    Geometrías disponibles:\n"
+         << "================================\n"
+         << "1. Focos circulares (especificar número)\n"
+         << "2. Línea horizontal central\n"
+         << "3. Cuadrado central\n"
+         << "4. Patrón hexagonal\n"
+         << "5. Cruz central\n"
+         << "================================\n";
+}
+
+void create_directory(const string& path) {
+    int status = mkdir(path.c_str(), 0777);
+    if (status != 0 && errno != EEXIST) {
+        cerr << "Error al crear directorio: " << path << endl;
+        exit(1);
+    }
+}
 
 int main() {
     cout << "Tamaño de la malla (N x N, recomendado 100-2000): ";
@@ -49,6 +316,7 @@ int main() {
     }
 
     dx_sq = dx * dx;
+    double inv_dx_sq = 1.0 / dx_sq;
 
     print_geometry_options();
 
@@ -68,336 +336,103 @@ int main() {
         num_sources = 1;
     }
 
-    // Vector para almacenar tiempos de ejecución para diferentes números de hilos
-    vector<double> execution_times;
-
-    // Ejecutar la simulación con diferentes números de hilos (de 2 a 8)
-    for (int num_threads = 2; num_threads <= 8; num_threads++) {
-        run_simulation(num_threads, N, geometry_type, num_sources, execution_times);
-    }
-
-    // Guardar los tiempos de ejecución para generar la gráfica
-    ofstream time_data("threads_vs_time.csv");
-    time_data << "Hilos,Tiempo\n";
-    for (size_t i = 0; i < execution_times.size(); ++i) {
-        time_data << (i+2) << "," << fixed << setprecision(4) << execution_times[i] << "\n";
-    }
-    time_data.close();
-
-    cout << "\nDatos de tiempo vs hilos guardados en: threads_vs_time.csv\n";
-    cout << "Puede usar este archivo para generar una gráfica de tiempo vs hilos.\n";
-
-    return 0;
-}
-
-void run_simulation(int num_threads, int N, int geometry_type, int num_sources, vector<double>& times) {
-    double total_time = 0.0;
-    auto total_start = high_resolution_clock::now();
-
-    // Configurar número de hilos
-    omp_set_num_threads(num_threads);
-
-    string output_dir = "BZ_Geometry_" + to_string(geometry_type) + "_threads_" + to_string(num_threads);
+    string output_dir = "BZ_Geometry_" + to_string(geometry_type);
     create_directory(output_dir);
 
+    // Iniciar hilos de escritura
+    for (int i = 0; i < MAX_SAVE_THREADS; ++i) {
+        writers_running[i] = true;
+        writer_threads.emplace_back(writer_thread_function, i, output_dir);
+    }
+
+    // Configuración de grids
+    vector<double> u(N*N), v(N*N), u_next(N*N), v_next(N*N);
+
     // Inicialización
-    Grid u, v;
-    u.resize(N, vector<double>(N, 1.0));
-    v.resize(N, vector<double>(N, 0.0));
+    auto start = high_resolution_clock::now();
+    initialize_BZ(u, v, N, geometry_type, num_sources);
 
-    auto init_start = high_resolution_clock::now();
-    initialize_BZ(u, v, geometry_type, num_sources);
-    auto init_end = high_resolution_clock::now();
-    double init_time = duration_cast<duration<double>>(init_end - init_start).count();
+    // Configurar OpenMP
+    omp_set_num_threads(omp_get_max_threads());
+    omp_set_schedule(omp_sched_guided, 64/sizeof(double));
 
-    cout << "\n=== Simulación con " << num_threads << " hilos ===\n";
-    cout << "Tamaño: " << N << "x" << N << " | Pasos: " << steps << "\n";
-
-    // Configuración de métricas
-    ofstream metrics(output_dir + "/metrics.csv");
-    metrics << "Paso,Entropia,GradientePromedio\n";
+    // Archivo de métricas binario
+    ofstream metrics(output_dir + "/metrics.bin", ios::binary);
+    if (!metrics.is_open()) {
+        cerr << "Error al crear archivo de métricas" << endl;
+        return 1;
+    }
 
     // Métricas iniciales
-    double initial_entropy = calculate_normalized_entropy(v);
-    double initial_grad = calculate_average_gradient(v);
-    metrics << 0 << "," << fixed << setprecision(6) << initial_entropy << "," << initial_grad << "\n";
+    double initial_entropy = calculate_entropy(v, N);
+    double initial_grad = calculate_average_gradient(v, N);
+    
+    // Escribir métricas iniciales
+    int step_zero = 0;
+    metrics.write(reinterpret_cast<const char*>(&step_zero), sizeof(int));
+    metrics.write(reinterpret_cast<const char*>(&initial_entropy), sizeof(double));
+    metrics.write(reinterpret_cast<const char*>(&initial_grad), sizeof(double));
+
+    cout << "\n=== Simulación Belousov-Zhabotinsky ===\n";
+    cout << "Tamaño: " << N << "x" << N << " | Pasos: " << steps << "\n";
+    cout << "Geometría: " << geometry_type << " | Focos: " << num_sources << "\n";
+    cout << "Entropía inicial: " << initial_entropy << "\n";
 
     // Simulación principal
-    auto sim_start = high_resolution_clock::now();
     for (int n = 1; n <= steps; ++n) {
-        Grid u_next = u;
-        Grid v_next = v;
-
-        // Paralelización del bucle principal de cálculo
-        #pragma omp parallel for collapse(2) schedule(dynamic)
+        #pragma omp parallel for collapse(2)
         for (int i = 0; i < N; ++i) {
             for (int j = 0; j < N; ++j) {
-                double u_val = u[i][j];
-                double v_val = v[i][j];
+                int idx = i*N + j;
+                double u_val = u[idx];
+                double v_val = v[idx];
                 double uvv = u_val * v_val * v_val;
-
-                double lap_u = laplacian(u, i, j);
-                double lap_v = laplacian(v, i, j);
-
-                u_next[i][j] = std::max(0.0, std::min(1.5, u_val + dt * (Du * lap_u - uvv + F * (1.0 - u_val))));
-                v_next[i][j] = max(0.0, min(1.0, v_val + dt * (Dv * lap_v + uvv - F_plus_k * v_val)));
+                
+                double lap_u = laplacian(u, i, j, N, inv_dx_sq);
+                double lap_v = laplacian(v, i, j, N, inv_dx_sq);
+                
+                u_next[idx] = my_clamp(u_val + dt * (Du * lap_u - uvv + F * (1.0 - u_val)), 0.0, 1.5);
+                v_next[idx] = my_clamp(v_val + dt * (Dv * lap_v + uvv - F_plus_k * v_val), 0.0, 1.0);
             }
         }
-        u = move(u_next);
-        v = move(v_next);
+        swap(u, u_next);
+        swap(v, v_next);
 
         if (n % output_interval == 0) {
-            save_grid(v, n, output_dir);
+            save_grid_parallel(v, n, output_dir);
 
-            double entropy = calculate_normalized_entropy(v);
-            double avg_grad = calculate_average_gradient(v);
-            metrics << n << "," << fixed << setprecision(6) << entropy << "," << avg_grad << "\n";
+            double entropy = calculate_entropy(v, N);
+            double avg_grad = calculate_average_gradient(v, N);
+            
+            // Escribir métricas
+            metrics.write(reinterpret_cast<const char*>(&n), sizeof(int));
+            metrics.write(reinterpret_cast<const char*>(&entropy), sizeof(double));
+            metrics.write(reinterpret_cast<const char*>(&avg_grad), sizeof(double));
 
             cout << "\rProgreso: " << n << "/" << steps
-                 << " | Entropía: " << setw(6) << setprecision(3) << entropy
-                 << " | ∇: " << setw(6) << avg_grad << flush;
+                 << " | Entropía: " << fixed << setprecision(4) << entropy
+                 << " | ∇: " << avg_grad << flush;
         }
     }
-    auto sim_end = high_resolution_clock::now();
-    double simulation_time = duration_cast<duration<double>>(sim_end - sim_start).count();
 
+    // Finalización
     metrics.close();
-
-    auto total_end = high_resolution_clock::now();
-    total_time = duration_cast<duration<double>>(total_end - total_start).count();
-
-    cout << "\nTiempo total con " << num_threads << " hilos: " << fixed << setprecision(4) << total_time << " s\n";
-    times.push_back(total_time);
-}
-
-// Las demás funciones permanecen igual que en el código original
-// [Aquí irían todas las demás funciones sin cambios: print_geometry_options, create_directory, 
-// initialize_BZ, laplacian, save_grid, calculate_normalized_entropy, calculate_average_gradient]
-
-void print_geometry_options() {
-    const char* options =
-        "================================\n"
-        "    Geometrías disponibles:\n"
-        "================================\n"
-        "1. Focos circulares (especificar número)\n"
-        "2. Línea horizontal central\n"
-        "3. Cuadrado central\n"
-        "4. Patrón hexagonal\n"
-        "5. Cruz central\n"
-        "================================\n";
-    cout << options;
-}
-
-void create_directory(const string& path) {
-    int status = mkdir(path.c_str(), 0777);
-    if (status != 0 && errno != EEXIST) {
-        cerr << "Error al crear directorio: " << path << endl;
-        exit(1);
-    }
-}
-
-void initialize_BZ(Grid& u, Grid& v, int geometry_type, int num_sources) {
-    random_device rd;
-    mt19937 gen(rd());
-    uniform_real_distribution<> dis(0.0, 1.0);
-
-    // Inicialización base
-    #pragma omp parallel for
-    for (auto& row : u) {
-        for (auto& val : row) {
-            val = 0.8 + 0.05 * dis(gen);
-        }
+    
+    for (int i = 0; i < MAX_SAVE_THREADS; ++i) {
+        writers_running[i] = false;
+        queue_cvs[i].notify_one();
     }
 
-    const double radius = 8.0;
-    const double radius_sq = radius * radius;
-    const double center = N/2.0;
-    const double hex_size = N/5.0;
-    const double hex_const = hex_size * 0.866;
-
-    switch(geometry_type) {
-        case 1: { // Focos circulares
-            const double angle_step = 2.0 * M_PI / num_sources;
-            const double dist = N/3.5;
-
-            for (int s = 0; s < num_sources; s++) {
-                double angle = angle_step * s;
-                double cx = center + dist * cos(angle);
-                double cy = center + dist * sin(angle);
-
-                int min_i = max(0, static_cast<int>(cx - radius - 1));
-                int max_i = min(N-1, static_cast<int>(cx + radius + 1));
-                int min_j = max(0, static_cast<int>(cy - radius - 1));
-                int max_j = min(N-1, static_cast<int>(cy + radius + 1));
-
-                for (int i = min_i; i <= max_i; ++i) {
-                    double dx = i - cx;
-                    for (int j = min_j; j <= max_j; ++j) {
-                        double dy = j - cy;
-                        if (dx*dx + dy*dy < radius_sq) {
-                            v[i][j] = 0.9;
-                            u[i][j] = 0.2;
-                        }
-                    }
-                }
-            }
-            break;
-        }
-        case 2: { // Línea horizontal
-            int j_start = max(0, static_cast<int>(center-3));
-            int j_end = min(N-1, static_cast<int>(center+3));
-
-            #pragma omp parallel for
-            for (int i = 0; i < N; ++i) {
-                for (int j = j_start; j <= j_end; ++j) {
-                    v[i][j] = 0.9;
-                    u[i][j] = 0.2;
-                }
-            }
-            break;
-        }
-        case 3: { // Cuadrado central
-            int size = N/4;
-            int i_start = max(0, static_cast<int>(center-size));
-            int i_end = min(N-1, static_cast<int>(center+size));
-            int j_start = i_start, j_end = i_end;
-
-            #pragma omp parallel for
-            for (int i = i_start; i <= i_end; ++i) {
-                for (int j = j_start; j <= j_end; ++j) {
-                    v[i][j] = 0.9;
-                    u[i][j] = 0.2;
-                }
-            }
-            break;
-        }
-        case 4: { // Hexágono
-            int i_start = max(0, static_cast<int>(center-hex_size));
-            int i_end = min(N-1, static_cast<int>(center+hex_size));
-            int j_start = max(0, static_cast<int>(center-hex_const));
-            int j_end = min(N-1, static_cast<int>(center+hex_const));
-
-            #pragma omp parallel for
-            for (int i = i_start; i <= i_end; ++i) {
-                double dx_val = abs(i - center);
-                for (int j = j_start; j <= j_end; ++j) {
-                    double dy_val = abs(j - center);
-                    if (dx_val <= hex_size && dy_val <= hex_const &&
-                        (0.5*hex_size + 0.866*dy_val) <= hex_size) {
-                        v[i][j] = 0.9;
-                        u[i][j] = 0.2;
-                    }
-                }
-            }
-            break;
-        }
-        case 5: { // Cruz
-            int center_start = max(0, static_cast<int>(center-2));
-            int center_end = min(N-1, static_cast<int>(center+2));
-
-            // Parte horizontal
-            #pragma omp parallel for
-            for (int i = 0; i < N; ++i) {
-                for (int j = center_start; j <= center_end; ++j) {
-                    v[i][j] = 0.9;
-                    u[i][j] = 0.2;
-                }
-            }
-            // Parte vertical
-            #pragma omp parallel for
-            for (int j = 0; j < N; ++j) {
-                for (int i = center_start; i <= center_end; ++i) {
-                    v[i][j] = 0.9;
-                    u[i][j] = 0.2;
-                }
-            }
-            break;
-        }
+    for (auto& t : writer_threads) {
+        if (t.joinable()) t.join();
     }
 
-    // Pequeña perturbación en el resto de la matriz v
-    #pragma omp parallel for
-    for (auto& row : v) {
-        for (auto& val : row) {
-            if (val == 0.0) val = 0.001 * dis(gen);
-        }
-    }
-}
+    auto end = high_resolution_clock::now();
+    double total_time = duration_cast<duration<double>>(end - start).count();
 
-inline double laplacian(const Grid& g, int i, int j) {
-    return (g[(i+1)%N][j] + g[(i-1+N)%N][j] +
-           g[i][(j+1)%N] + g[i][(j-1+N)%N] -
-           4.0 * g[i][j]) / dx_sq;
-}
+    cout << "\n\n=== Simulación completada ===";
+    cout << "\nTiempo total: " << total_time << " s";
+    cout << "\nDatos guardados en: " << output_dir << "/\n";
 
-void save_grid(const Grid& v, int iter, const string& output_dir) {
-    string filename = output_dir + "/bz_" + to_string(iter) + ".csv";
-    ofstream out(filename);
-
-    if (!out.is_open()) {
-        cerr << "Error al crear archivo: " << filename << endl;
-        return;
-    }
-
-    out << fixed << setprecision(6);
-    for (const auto& row : v) {
-        for (size_t j = 0; j < row.size(); ++j) {
-            out << row[j];
-            if (j != row.size()-1) out << ",";
-        }
-        out << "\n";
-    }
-    out.close();
-}
-
-double calculate_normalized_entropy(const Grid& data) {
-    const int bins = 20;
-    const double bin_size = 1.0 / bins;
-    const double log_bins = log(bins);
-    int hist[bins] = {0};  // Array estilo C estático
-    const double total = N*N;
-    const double inv_total = 1.0 / total;
-
-    // Usamos atomic para evitar condiciones de carrera
-    #pragma omp parallel for
-    for (const auto& row : data) {
-        for (double val : row) {
-            int bin = min(bins-1, static_cast<int>(val / bin_size));
-            #pragma omp atomic
-            hist[bin]++;
-        }
-    }
-
-    double entropy = 0.0;
-    for (int count : hist) {
-        if (count > 0) {
-            double p = count * inv_total;
-            entropy -= p * log(p);
-        }
-    }
-    return entropy / log_bins;
-}
-
-double calculate_average_gradient(const Grid& data) {
-    double total_gradient = 0.0;
-    int gradient_count = 0;
-    const int N_minus_1 = N - 1;
-
-    #pragma omp parallel for reduction(+:total_gradient, gradient_count)
-    for (int i = 0; i < N; ++i) {
-        for (int j = 0; j < N_minus_1; ++j) {
-            total_gradient += abs(data[i][j+1] - data[i][j]);
-            gradient_count++;
-        }
-    }
-
-    #pragma omp parallel for reduction(+:total_gradient, gradient_count)
-    for (int j = 0; j < N; ++j) {
-        for (int i = 0; i < N_minus_1; ++i) {
-            total_gradient += abs(data[i+1][j] - data[i][j]);
-            gradient_count++;
-        }
-    }
-
-    return gradient_count ? total_gradient / gradient_count : 0.0;
+    return 0;
 }
