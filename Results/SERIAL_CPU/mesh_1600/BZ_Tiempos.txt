@@ -1,7 +1,14 @@
-=== Tiempos de Ejecución ===
-Búsqueda de carpeta: 0.0016 s
-Carga de métricas: 0.0445 s
-Creación de directorio: 0.0014 s
-Carga de datos: 0.4259 s
+=== Resultados ===
+=== Tiempos de ejecución ===
+Inicialización: 0.1029 s
+Simulación principal: 11663.0216 s
+Guardado de datos: 1858.7117 s
+Cálculo de entropía: 8.4165 s
+Cálculo de gradiente: 39.1362 s
+Métricas y escritura: 47.5905 s
 ---------------------------------
-Ubicación de resultados: /content/gray-scott-reaction-diffusion-hpc/gray-scott-reaction-diffusion-hpc/gray-scott-reaction-diffusion-hpc/BZ_Visualization_20250701_034421
+Suma de tiempos parciales: 13616.9793 s
+Tiempo total medido: 11672.6321 s
+Datos guardados en:
+- BZ_Geometry_1/bz_XXXXX.csv (patrones espaciales)
+- BZ_Geometry_1/metrics.csv (métricas cuantitativas)
