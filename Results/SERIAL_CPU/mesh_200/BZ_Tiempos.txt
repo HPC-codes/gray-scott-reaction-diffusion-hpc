@@ -1,7 +1,14 @@
-=== Tiempos de Ejecución ===
-Búsqueda de carpeta: 0.0008 s
-Carga de métricas: 0.0037 s
-Creación de directorio: 0.0002 s
-Carga de datos: 0.0046 s
+=== Resultados ===
+=== Tiempos de ejecución ===
+Inicialización: 0.0010 s
+Simulación principal: 69.8275 s
+Guardado de datos: 15.2665 s
+Cálculo de entropía: 0.1041 s
+Cálculo de gradiente: 0.1205 s
+Métricas y escritura: 0.2297 s
 ---------------------------------
-Ubicación de resultados: /content/gray-scott-reaction-diffusion-hpc/BZ_Visualization_20250630_235735
+Suma de tiempos parciales: 85.5493 s
+Tiempo total medido: 79.3507 s
+Datos guardados en:
+- BZ_Geometry_1/bz_XXXXX.csv (patrones espaciales)
+- BZ_Geometry_1/metrics.csv (métricas cuantitativas)
