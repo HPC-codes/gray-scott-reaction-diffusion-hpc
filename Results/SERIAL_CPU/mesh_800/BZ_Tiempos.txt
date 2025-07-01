@@ -1,7 +1,10 @@
-=== Tiempos de Ejecución ===
-Búsqueda de carpeta: 0.0004 s
-Carga de métricas: 0.0025 s
-Creación de directorio: 0.0003 s
-Carga de datos: 0.0403 s
+=== Resultados ===
+=== Tiempos de ejecución ===
+Inicialización: 0.0000 s
+Simulación principal: 0.0442 s
+Guardado de datos: 0.5230 s
+Cálculo de entropía: 0.0011 s
+Cálculo de gradiente: 0.0063 s
+Métricas y escritura: 0.3695 s
 ---------------------------------
-Ubicación de resultados: /content/gray-scott-reaction-diffusion-hpc/gray-scott-reaction-diffusion-hpc/BZ_Visualization_20250701_003447
+Datos guardados en: /content/gray-scott-reaction-diffusion-hpc/gray-scott-reaction-diffusion-hpc/BZ_Visualization_20250701_004801
