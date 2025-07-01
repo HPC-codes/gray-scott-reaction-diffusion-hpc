@@ -1,4 +1,3 @@
-todavia no lo pruebes, lo pongo aqui para copiarlo ahorita y seguir las pruebas
 # === Compiladores ===
 CC = g++
 NVCC = nvcc
