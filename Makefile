@@ -14,18 +14,21 @@ SCRIPTS_DIR = $(BASE_DIR)/scripts
 CFLAGS = -Wall -O3
 NVCCFLAGS = -O3 --default-stream per-thread -arch=sm_75
 MPIFLAGS = -Wall -O3
+OMPFLAGS = -fopenmp -Wall -O3
 
 # === Ejecutables ===
 SERIAL_EXE = $(BIN_DIR)/gray_scott_serial
 MPI_EXE = $(BIN_DIR)/gray_scott_mpi
 CUDA_EXE = $(BIN_DIR)/gray_scott_cuda
+OMP_EXE = $(BIN_DIR)/gray_scott_omp
 
 # === Reglas principales ===
-all: serial mpi cuda
+all: serial mpi cuda omp
 
 serial: $(SERIAL_EXE)
 mpi: $(MPI_EXE)
 cuda: $(CUDA_EXE)
+omp: $(OMP_EXE)
 
 # === Reglas de compilación ===
 $(SERIAL_EXE): $(SRC_DIR)/serial.cpp
@@ -39,6 +42,10 @@ $(MPI_EXE): $(SRC_DIR)/mpi.cpp
 $(CUDA_EXE): $(SRC_DIR)/cuda.cu
 	@mkdir -p $(BIN_DIR)
 	$(NVCC) $(NVCCFLAGS) $< -o $@
+
+$(OMP_EXE): $(SRC_DIR)/OMP.cpp
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(OMPFLAGS) $< -o $@
 
 # === Reglas de ejecución individuales ===
 run_serial: serial
@@ -56,19 +63,27 @@ run_cuda: cuda
 	@echo "Ejecutando versión CUDA..."
 	@$(CUDA_EXE)
 
+run_omp: omp
+	@mkdir -p $(DATA_DIR)
+	@echo "Ejecutando versión OpenMP..."
+	@OMP_NUM_THREADS=4 $(OMP_EXE)
+
 # === Ejecución interactiva ===
 run:
 	@echo "=== Selecciona la versión a ejecutar ==="
 	@echo "1) Serial"
 	@echo "2) MPI"
 	@echo "3) CUDA"
-	@read -p "Opción [1-3]: " opt; \
+	@echo "4) OpenMP"
+	@read -p "Opción [1-4]: " opt; \
 	if [ $$opt = "1" ]; then \
 		$(MAKE) run_serial; \
 	elif [ $$opt = "2" ]; then \
 		$(MAKE) run_mpi; \
 	elif [ $$opt = "3" ]; then \
 		$(MAKE) run_cuda; \
+	elif [ $$opt = "4" ]; then \
+		$(MAKE) run_omp; \
 	else \
 		echo "Opción inválida"; exit 1; \
 	fi
