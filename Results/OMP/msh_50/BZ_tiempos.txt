@@ -1,1 +1,5 @@
-
+=== Simulación completada ===
+Tiempo total: 5.1402 s
+Datos guardados en: BZ_Geometry_1/
+make[1]: Leaving directory '/content/gray-scott-reaction-diffusion-hpc'
+make: Leaving directory '/content/gray-scott-reaction-diffusion-hpc'
